@@ -55,6 +55,8 @@ apps/web/public/music/
 tmp-assets/
 # 开发期临时产物（截图裁剪、调试脚本）
 .workbuddy-tmp-*
+# tsc 的输出日志（*.log 已被上面的规则覆盖，这两个是 .txt 后缀逃过一劫）
+g_tsc*.txt
 # 内部开发记录（会话记忆、决策日志），不入公开仓库
 .workbuddy/
 
