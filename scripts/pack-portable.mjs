@@ -5,14 +5,20 @@
  * ============================================================
  *
  * 用法：
- *   node scripts/pack-portable.mjs --name=0.3.3正式版
+ *   node scripts/pack-portable.mjs --name=0.3.4正式版              （完整包，默认）
+ *   ... --tier=lite      精简包（程序，不含素材）
+ *   ... --tier=assets    素材包（美术 + 音乐，不含程序）
+ *   ... --tier=update --from=<上一版解压目录>    更新包（只含改动过的文件）
  *   ... --skip-build        复用当前的 apps/web/dist（改完前端又build过时用）
  *   ... --no-zip            只组装目录，不打 zip（调试打包流程用）
  *   ... --keep              目标目录已存在时不要删（默认会先整个删掉重来）
  *
- * 产物：
- *   E:\AIRNIGHT\版本文件\失序协议-网页版-<name>\         （目录，可当场双击试）
- *   E:\AIRNIGHT\版本文件\失序协议-网页版-<name>.zip       （发给朋友的那份）
+ * 产物（E:\AIRNIGHT\版本文件\ 下，目录 + 同名 zip）：
+ *   full   失序协议-网页版-<name>\           （目录，可当场双击试）
+ *          失序协议-网页版-<name>.zip         （发给朋友的那份，≈615 MB）
+ *   lite   失序协议-网页版-<name>-lite.zip   （≈94 MB，不含素材）
+ *   assets 失序协议-素材包-<name>.zip        （≈514 MB，只有美术与音乐）
+ *   update 失序协议-网页版-<name>-update.zip （几 MB，解压覆盖到旧包上升级）
  *
  * ============================================================
  *  为什么要有这个脚本？
@@ -45,6 +51,7 @@
  */
 
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   cpSync,
   createWriteStream,
@@ -95,13 +102,42 @@ const NAME = argValue('name');
 const SKIP_BUILD = argv.includes('--skip-build');
 const NO_ZIP = argv.includes('--no-zip');
 const KEEP = argv.includes('--keep');
+/*
+  ★ 分档打包（对齐其他同人游戏的分发惯例，见 README「下载」一节）
+
+    --tier=full     完整包（默认）：程序 + 全部素材，解压即玩。约 615 MB。
+    --tier=lite     精简包：程序 + 运行时，**不含**游戏素材与音乐。约 86 MB。
+                    玩家自己去下 `-assets.zip` 补上，适合小水管/已有素材的人。
+    --tier=assets   素材包：只有 `web/assets`（游戏美术）+ `web/music`，不含程序。
+                    解压到游戏根目录覆盖同名 `web/` 即可。
+    --tier=update   更新包：只含相对上一版**改动过**的文件。
+                    必须配 --from=<上一版解压目录>，解压覆盖到旧包上即可升级。
+
+  ★ 为什么 lite 不"首次启动自动下载素材"（别的项目是这么做的）：
+    我的素材不是"下载即得"——小人要先抓 Spine 骨骼、再起无头浏览器 + pixi 逐帧渲染成 PNG，
+    需要 Edge/Chrome 和几分钟渲染。把它塞进启动流程既慢又脆（浏览器版本、显卡都会影响）。
+    所以拆成独立的素材包，让玩家用下载工具自己续传，启动器只负责提示缺哪些。
+*/
+const TIER = argValue('tier', 'full');
+const TIERS = ['full', 'lite', 'assets', 'update'];
+if (!TIERS.includes(TIER)) {
+  console.error(`--tier 只能是 ${TIERS.join(' / ')}，收到的是「${TIER}」`);
+  process.exit(1);
+}
+const FROM = argValue('from'); // update 专用
 
 if (!NAME) {
-  console.error('用法：node scripts/pack-portable.mjs --name=0.3.3正式版');
+  console.error('用法：node scripts/pack-portable.mjs --name=0.3.4正式版 [--tier=full|lite|assets|update]');
+  process.exit(1);
+}
+if (TIER === 'update' && !FROM) {
+  console.error('--tier=update 需要 --from=<上一版的解压目录>，例如 --from="E:\\AIRNIGHT\\版本文件\\失序协议-网页版-0.3.3正式版"');
   process.exit(1);
 }
 
-const FOLDER = `失序协议-网页版-${NAME}`;
+const SUFFIX = { full: '', lite: '-lite', assets: '', update: '-update' }[TIER];
+const FOLDER =
+  TIER === 'assets' ? `失序协议-素材包-${NAME}` : `失序协议-网页版-${NAME}${SUFFIX}`;
 const OUT = join(RELEASES, FOLDER);
 const ZIP = join(RELEASES, `${FOLDER}.zip`);
 const log = (s) => console.log(s);
@@ -175,6 +211,145 @@ if (SKIP_BUILD) {
 const DIST = join(ROOT, 'apps', 'web', 'dist');
 if (!existsSync(join(DIST, 'index.html'))) throw new Error('找不到 apps/web/dist/index.html（先构建）');
 
+/*
+  ★ 游戏素材清单（唯一来源，动这里要同步三处）：
+      · 本文件 —— lite 才知道删什么、assets 才知道装什么
+      · NOTICE.md 第 2 节 —— 逐条列举「不属于本项目」的内容
+      · .gitignore —— 挡住它们入库
+  `dist/assets/` 里**不全是素材**：`index-*.js|css|map` 是 Vite 的代码产物，必须留下；
+  `README.md` 是素材目录的说明，也留下。下面两个清单只列官方的美术/音频。
+*/
+const GAME_ASSET_DIRS = [
+  'chibi', // 干员 Q 版序列帧（183 MB，最大的一块）
+  'covenants',
+  'fx',
+  'items',
+  'npc',
+  'player-avatars',
+  'stand',
+  'traits',
+  'units',
+];
+const GAME_ASSET_FILES = ['ark_tile.png', 'backdrop.png', 'tiles_atlas.png'];
+
+/** 打 zip（中文名不乱码，先写 .new 再校验 —— 见 scripts/zip-release.py 的注释）。 */
+function zipDir(src, dest) {
+  const py = 'C:/Users/18078/AppData/Local/Programs/Python/Python314/python.exe';
+  const res = spawnSync(py, [join(ROOT, 'scripts', 'zip-release.py'), src, dest], { stdio: 'inherit' });
+  if (res.status !== 0) throw new Error(`zip 打包失败：${dest}`);
+}
+
+/** robocopy 整目录（只覆盖不删除，退出码 0/1/2/3 都算成功）。 */
+function robocopyDir(from, to, label) {
+  const r = spawnSync('cmd', ['/c', 'robocopy', from, to, '/E', '/NFL', '/NDL', '/NJH', '/NJS', '/NP'], {
+    stdio: 'ignore',
+  });
+  if (![0, 1, 2, 3].includes(r.status ?? -1)) throw new Error(`复制 ${label} 失败：robocopy ${r.status}`);
+}
+
+/** 递归求目录总字节数。 */
+const dirSize = (dir) => {
+  let total = 0;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    total += entry.isDirectory() ? dirSize(path) : statSync(path).size;
+  }
+  return total;
+};
+/** 体积显示：>= 1 MB 用 MB（整数够看），更小的用 KB —— 增量包常常只有几百 KB。 */
+const mb = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(0)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+
+// ============================================================
+//  素材包分支（--tier=assets）：只装美术与音乐，不含程序
+// ============================================================
+if (TIER === 'assets') {
+  step(`素材包 → ${OUT}`);
+  if (existsSync(OUT)) {
+    if (KEEP) log('已存在，--keep ⇒ 就地覆盖');
+    else {
+      log('已存在 ⇒ 整个删掉重来');
+      rmDirSafe(OUT);
+    }
+  }
+  mkdirSync(join(OUT, 'web', 'assets'), { recursive: true });
+  mkdirSync(join(OUT, 'web', 'music'), { recursive: true });
+
+  for (const dir of GAME_ASSET_DIRS) {
+    const from = join(DIST, 'assets', dir);
+    if (!existsSync(from)) {
+      log(`⚠ 缺 assets/${dir}（素材没抓全？本包会少这一块）`);
+      continue;
+    }
+    robocopyDir(from, join(OUT, 'web', 'assets', dir), `assets/${dir}`);
+    log(`ok -> web/assets/${dir}`);
+  }
+  for (const file of GAME_ASSET_FILES) {
+    const from = join(DIST, 'assets', file);
+    if (existsSync(from)) {
+      cpSync(from, join(OUT, 'web', 'assets', file));
+      log(`ok -> web/assets/${file}`);
+    } else {
+      log(`⚠ 缺 assets/${file}`);
+    }
+  }
+  const musicFrom = join(DIST, 'music');
+  if (existsSync(musicFrom)) {
+    robocopyDir(musicFrom, join(OUT, 'web', 'music'), 'web/music');
+    log('ok -> web/music');
+  } else {
+    log('⚠ 缺 web/music（本包没有 BGM）');
+  }
+
+  writeFileSync(
+    join(OUT, '素材包说明.txt'),
+    [
+      '失序协议 · 素材包',
+      '================================================================',
+      '',
+      '这个包里只有游戏素材（美术 + 音乐），没有程序。',
+      '',
+      '怎么用',
+      '----------------------------------------------------------------',
+      '1. 先下载并解压「精简包」（失序协议-网页版-<版本>-lite.zip）。',
+      '2. 把本包解压出来的 web 文件夹，合并到精简包的根目录，覆盖同名文件。',
+      '   合并后的目录结构应该是：',
+      '',
+      '     失序协议-网页版-<版本>/',
+      '       web/index.html          ← 精简包带的',
+      '       web/assets/chibi/...    ← 本包带的',
+      '       web/assets/index-*.js   ← 精简包带的（别删）',
+      '       web/music/...           ← 本包带的',
+      '',
+      '3. 双击「启动游戏.vbs」即可。',
+      '',
+      '也可以直接用完整包，它已经把这两样合在一起了，不用手动合并。',
+      '',
+      '素材版权归鹰角网络 / 悠星所有，本项目无权转授。',
+      '仅供学习与个人非商业使用，不得出售、付费分发、收费开服或植入广告。',
+      '详见完整条款：NOTICE.md（仓库根目录）。',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  log('ok -> 素材包说明.txt');
+
+  /*
+    ★ 素材包也要带版权文件 —— 它分发的正是官方美术，
+      光一张说明纸不够。这两份会被合并进游戏根目录（同名覆盖，内容一致，无害）。
+  */
+  cpSync(join(ROOT, 'NOTICE.md'), join(OUT, '版权说明.txt'));
+  cpSync(join(ROOT, 'THIRD-PARTY-NOTICES.md'), join(OUT, '第三方组件声明.txt'));
+  log('ok -> 版权说明.txt / 第三方组件声明.txt');
+
+  const size = dirSize(OUT);
+  if (!NO_ZIP) {
+    step('打 zip');
+    zipDir(OUT, ZIP);
+  }
+  console.log(`\n完成：${FOLDER}（${mb(size)}${NO_ZIP ? '，未打 zip' : `，zip 已生成`}）`);
+  process.exit(0);
+}
+
 // ============================================================
 //  2. 服务端 bundle（ws 打进去；runtime 里没有 node_modules）
 // ============================================================
@@ -229,6 +404,36 @@ const webCopy = spawnSync('cmd', ['/c', 'robocopy', DIST, join(OUT, 'web'), '/E'
 });
 if (![0, 1, 2, 3].includes(webCopy.status ?? -1)) throw new Error(`复制 web/ 失败：robocopy ${webCopy.status}`);
 log('ok -> web/');
+
+/*
+  ★ lite：从**完整拷贝**里删素材，而不是"选择性复制"。
+    选择性复制漏一个目录 ⇒ 悄悄退化成占位图，很难查；
+    删的话漏删只是包大一点，一眼能看出来。方向选错比漏删危险。
+*/
+if (TIER === 'lite') {
+  step('精简：移除游戏素材与音乐');
+  let freed = 0;
+  for (const dir of GAME_ASSET_DIRS) {
+    const p = join(OUT, 'web', 'assets', dir);
+    if (existsSync(p)) {
+      freed += dirSize(p);
+      rmDirSafe(p);
+    }
+  }
+  for (const file of GAME_ASSET_FILES) {
+    const p = join(OUT, 'web', 'assets', file);
+    if (existsSync(p)) {
+      freed += statSync(p).size;
+      rmSync(p, { force: true });
+    }
+  }
+  const music = join(OUT, 'web', 'music');
+  if (existsSync(music)) {
+    freed += dirSize(music);
+    rmDirSafe(music);
+  }
+  log(`ok -> 移除素材 ${mb(freed)}（本包不含美术与音乐）`);
+}
 
 step('放 runtime/node.exe');
 /*
@@ -285,6 +490,43 @@ cpSync(join(ROOT, 'THIRD-PARTY-NOTICES.md'), join(OUT, '第三方组件声明.tx
 log('ok -> 第三方组件声明.txt');
 cpSync(join(ROOT, 'NOTICE.md'), join(OUT, '版权说明.txt'));
 log('ok -> 版权说明.txt');
+
+/*
+  ★ lite 一定要带这张纸。精简包解开就能启动、但满屏灰白占位图，
+    没有说明的话玩家第一反应是"包坏了"而不是"还差素材包"。
+*/
+if (TIER === 'lite') {
+  writeFileSync(
+    join(OUT, '补素材说明.txt'),
+    [
+      '失序协议 · 精简包（不含游戏素材）',
+      '================================================================',
+      '',
+      '这个包有程序、启动器和 Node 运行时，但**没有游戏美术和音乐**。',
+      '现在直接启动也能玩，但所有角色都会显示成灰白占位图，也没有 BGM——',
+      '功能是完整的，只是不好看。',
+      '',
+      '怎么补素材（二选一）',
+      '----------------------------------------------------------------',
+      'A. 下载素材包（推荐，适合网速慢、想断点续传的）',
+      '   在同一个发布页面下载：失序协议-素材包-' + NAME + '.zip',
+      '   解压它，把里面的 web 文件夹合并到本目录，覆盖同名文件即可。',
+      '   合并后 web/assets 下会同时有 index-*.js（程序）和 chibi/、units/ 等（素材），',
+      '   这两类都别删。',
+      '',
+      'B. 直接用完整包',
+      '   下载：失序协议-网页版-' + NAME + '.zip',
+      '   它已经把程序和素材合在一起，解压即玩，不需要本包。',
+      '',
+      '素材版权归鹰角网络 / 悠星所有，本项目无权转授。',
+      '仅供学习与个人非商业使用，不得出售、付费分发、收费开服或植入广告。',
+      '完整条款见本目录「版权说明.txt」。',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  log('ok -> 补素材说明.txt');
+}
 
 /*
   玩法说明.txt 是"怎么玩"的长期文案，不随版本变 —— 从上一个正式包沿用。
@@ -380,28 +622,77 @@ for (const junk of ['.airnight-run.json', '游戏日志.txt', '.window-profile']
 if (!ok) process.exitCode = 1;
 
 // ============================================================
+//  7.5 update：裁成增量（只留相对上一版变过的文件）
+// ============================================================
+if (TIER === 'update') {
+  step('裁增量（对比上一版）');
+  const oldRoot = resolve(FROM);
+  if (!existsSync(oldRoot)) throw new Error(`--from 目录不存在：${oldRoot}`);
+  /*
+    ★ 做法：**先按完整包组装，再把和旧版一模一样的文件删掉**，
+      剩下的就是增量。反过来（只复制"看起来是新的"）不可靠 ——
+      判断新旧的规则一旦有漏，玩家升级后就会缺文件，而缺文件的表现
+      往往是"某个干员变成占位图"，极难定位。
+      先装全再删，最差也只是包大一点。
+  */
+  const sha = (p) => createHash('sha256').update(readFileSync(p)).digest('hex');
+  const sameAsOld = (rel) => {
+    const from = join(oldRoot, rel);
+    const to = join(OUT, rel);
+    if (!existsSync(from)) return false; // 新增文件 ⇒ 要带上
+    const a = statSync(from);
+    const b = statSync(to);
+    if (a.size !== b.size) return false; // 大小不同 ⇒ 一定变了，省掉 hash
+    return sha(from) === sha(to);
+  };
+
+  let kept = 0;
+  let dropped = 0;
+  let bytes = 0;
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const abs = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(abs);
+        continue;
+      }
+      const rel = abs.slice(OUT.length + 1);
+      if (sameAsOld(rel)) {
+        rmSync(abs, { force: true });
+        dropped += 1;
+      } else {
+        kept += 1;
+        bytes += statSync(abs).size;
+      }
+    }
+  };
+  walk(OUT);
+
+  // 删掉被清空的目录，否则 zip 里会有一堆空文件夹
+  const pruneEmpty = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory()) pruneEmpty(join(dir, entry.name));
+    }
+    if (dir !== OUT && readdirSync(dir).length === 0) rmSync(dir, { recursive: true, force: true });
+  };
+  pruneEmpty(OUT);
+
+  log(`ok -> 变更 ${kept} 个文件（${mb(bytes)}），与上一版相同 ${dropped} 个已剔除`);
+  if (kept === 0) log('⚠ 这一版和上一版没有文件差异，更新包是空的（改动没进 dist？）');
+}
+
+// ============================================================
 //  8. 打 zip（Python zipfile：中文名不乱码，且先写 .new 再校验）
 // ============================================================
 if (!NO_ZIP) {
   step('打 zip');
-  const py = 'C:/Users/18078/AppData/Local/Programs/Python/Python314/python.exe';
-  const script = join(ROOT, 'scripts', 'zip-release.py');
-  const res = spawnSync(py, [script, OUT, ZIP], { stdio: 'inherit' });
-  if (res.status !== 0) throw new Error('zip 打包失败');
+  zipDir(OUT, ZIP);
 }
 
 // ============================================================
 //  汇总
 // ============================================================
-const dirSize = (dir) => {
-  let total = 0;
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const path = join(dir, entry.name);
-    total += entry.isDirectory() ? dirSize(path) : statSync(path).size;
-  }
-  return total;
-};
-const mb = (bytes) => `${(bytes / 1024 / 1024).toFixed(0)} MB`;
+// dirSize / mb 已在上方统一定义（素材包分支也要用），这里不要再定义一次。
 log('\n================ 打包完成 ================');
 log(`目录：${OUT}（${mb(dirSize(OUT))}）`);
 if (!NO_ZIP) log(`zip ：${ZIP}（${mb(statSync(ZIP).size)}）`);

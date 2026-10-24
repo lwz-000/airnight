@@ -21,21 +21,36 @@
 
 ## 一、发行包里到底有什么
 
-`scripts/pack-portable.mjs` 打出来的便携包，结构固定为：
+`scripts/pack-portable.mjs` 打四种包。**分档只决定有没有素材，程序与许可证文件完全相同**：
+
+| 档 | 文件名 | 含什么 | 约 |
+|---|---|---|---|
+| 完整包 | `失序协议-网页版-<版本>.zip` | 程序 + 全部美术与音乐 | 615 MB |
+| 精简包 | `失序协议-网页版-<版本>-lite.zip` | 程序，去掉美术与音乐 | 94 MB |
+| 素材包 | `失序协议-素材包-<版本>.zip` | 只有 `web/assets` 的美术与 `web/music` | 514 MB |
+| 更新包 | `失序协议-网页版-<版本>-update.zip` | 只有相对上一版改动过的文件 | 几 MB |
+
+完整包 / 精简包 / 更新包的结构：
 
 ```
 失序协议-网页版-<版本>/
   启动游戏.vbs / 关闭游戏.vbs / 启动游戏.cmd
   启动说明.txt · 玩法说明.txt · 更新日志.txt · 游戏图标.ico
+  版权说明.txt                NOTICE.md（非商业条款 + 五级下架层级表）
+  第三方组件声明.txt          本文件
   app/launch.mjs              启动器（本项目，MIT）
   app/airnight-server.mjs     服务端 bundle（本项目 + ws）
   runtime/node.exe            Node.js 运行时
-  runtime/LICENSE-Node.js.txt Node.js 及其内置组件的完整许可证
-  web/                        前端产物（本项目 + three.js）
+  runtime/LICENSE-Node.js.txt Node.js 及其内置组件的完整许可证（约 148 KB）
+  web/                        前端产物（本项目 + three.js + 字体）
 ```
 
-**包里没有 `node_modules`。** `ws` 由 esbuild 打进 `app/airnight-server.mjs`，
-`three` 由 Vite 打进 `web/assets/index-*.js`，所以发行包是一个自足的目录。
+差异只有两处：**精简包**额外带一张 `补素材说明.txt`，并把 `web/assets` 里的美术目录与 `web/music`
+删掉（`index-*.js` 这类代码产物保留）；**素材包**只有 `web/assets/*`（美术）+ `web/music/`，
+再加 `素材包说明.txt` 与上述两份版权文件。
+
+**四种包都不带 `node_modules`。** `ws` 由 esbuild 打进 `app/airnight-server.mjs`，
+`three` 由 Vite 打进 `web/assets/index-*.js`，所以每个包都是自足的目录。
 
 ---
 

@@ -17,12 +17,42 @@
 >
 > 完整条款 [**NOTICE.md**](NOTICE.md)（含下架层级表与降级链）｜ 代码许可 [LICENSE](LICENSE)
 > ｜ 第三方组件清单与许可证全文 [**THIRD-PARTY-NOTICES.md**](THIRD-PARTY-NOTICES.md)
+>
+> **下载或使用任何 Release 附件，即视为同意以上条款。**
 
 > 这份 README 写给「不是程序员」的人看。技术细节都在代码注释里，每个关键决策都写了「为什么」。
 
 ---
 
-## 一分钟跑起来
+## 下载（只想玩，不想碰代码）
+
+去 [Releases](../../releases/latest) 拿，四档按需选一个：
+
+| 包 | 大小 | 怎么用 |
+|---|---|---|
+| **完整包** `失序协议-网页版-<版本>.zip` | ≈ 615 MB | **推荐。** 程序 + 全部美术与音乐，解压后双击「启动游戏.vbs」。不用装 Node，不用联网补素材 |
+| 精简包 `失序协议-网页版-<版本>-lite.zip` | ≈ 94 MB | 只有程序与运行时，**不含素材**（角色会显示成灰白占位图，但能玩）。适合网速慢：先下这个，再单独下素材包 |
+| 素材包 `失序协议-素材包-<版本>.zip` | ≈ 514 MB | 只有美术 + 音乐。解压后把里面的 `web` 文件夹合并进精简包目录，覆盖同名文件 |
+| 更新包 `失序协议-网页版-<版本>-update.zip` | 通常几 MB | 只含相对上一版**改动过**的文件。已装旧版的解压覆盖即可升级，不用重下整个包 |
+
+> 包里的 `web/assets` 目录同时装着**程序**（`index-*.js` / `index-*.css`）和**素材**（`chibi/`、`units/`…）。
+> 合并素材包时只覆盖素材，别把 `index-*.js` 删了 —— 删了游戏打不开。
+>
+> 素材版权归鹰角网络 / 悠星所有。**详细条款与下架承诺见 [NOTICE.md](NOTICE.md)。**
+
+自己打这些包：
+
+```bash
+node scripts/pack-portable.mjs --name=0.3.5正式版                 # 完整包
+node scripts/pack-portable.mjs --name=0.3.5正式版 --tier=lite     # 精简包
+node scripts/pack-portable.mjs --name=0.3.5正式版 --tier=assets   # 素材包
+node scripts/pack-portable.mjs --name=0.3.5正式版 --tier=update \
+  --from="E:\AIRNIGHT\版本文件\失序协议-网页版-0.3.4正式版"          # 更新包（要指定上一版目录）
+```
+
+---
+
+## 一分钟跑起来（从源码）
 
 > ⚠️ **不要直接敲 `pnpm install`**。你系统的 PowerShell 禁止运行脚本（执行策略限制），会报「无法加载文件 pnpm.ps1」。
 > 所有命令都用 `node scripts/...` 的形式，它绕过了这个限制。
