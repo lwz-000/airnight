@@ -19,15 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-----------------------------------------------------------------------------
-注：本许可证只覆盖本项目自己编写的代码与文档。
-
-《明日方舟》相关的全部名称、角色、美术、Spine 模型、音乐音效、文本与游戏数据，
-版权归上海鹰角网络科技有限公司及其授权方所有，不在本许可证范围内，也未随本仓库分发。
-详见 NOTICE.md。
-
-Note: This license covers only the code and documents written by this project.
-All Arknights names, art, models, audio and game data are © Hypergryph / Yostar
-and their licensors, are not covered by this license, and are not distributed
-with this repository. See NOTICE.md.
