@@ -2,6 +2,8 @@
 
 一个自走棋游戏。**3D 场景 + 2D 角色与 UI，支持 2–8 人好友联机。**
 
+**当前版本 v0.3.4 正式版** ｜ 完整可玩 ｜ 119 名干员 · 21 个羁绊 · 70 件藏品 · 16 份盟约
+
 > ### ⚠️ 非官方同人作品
 >
 > 本作与上海鹰角网络（Hypergryph）、悠星（Yostar）**无任何关联**，未获授权或认可。
@@ -107,22 +109,32 @@ node scripts/verify.mjs
 
 ```
 AIRNIGHT/
-├─ packages/shared/      确定性战斗内核 + 棋子数据表（前后端共用同一份代码）
-│   ├─ src/unit-data.ts      ← 你的「策划表格」，加角色主要改这里
-│   ├─ src/rules.ts          ← 战斗主循环
-│   ├─ src/constants.ts      ← 所有数值常量（帧率、棋盘大小、各类公式系数）
-│   └─ test/                 ← 19 个测试：证明同种子必得同结果
-├─ packages/server/      联机房间服务（6 位房间码，2–8 人）
-├─ packages/sim-cli/     终端战斗调试台
-├─ apps/web/             游戏客户端（Three.js 3D 场景 + 原生 DOM 的 2D UI）
-│   └─ src/
-│       ├─ three/board.ts      3D 棋盘、相机、鼠标拾取
-│       ├─ three/replay.ts     战斗播放器（把事件流变成动画）
-│       ├─ three/sprite-graphics.ts  用代码画出棋子卡片（含血条）
-│       ├─ game/state.ts       布阵规则（纯逻辑，可测试）
-│       └─ main.ts             主编排：把上面全部接起来
-├─ scripts/              一键验证、pnpm 包装器、平衡诊断
-└─ docs/                 设计资料收集表 + 进度说明
+├─ packages/shared/          确定性战斗内核 + 全部数据表（前后端共用同一份代码）
+│   ├─ src/rules.ts            战斗主循环
+│   ├─ src/combat-math.ts      伤害 / 护甲 / 攻速的定点数运算
+│   ├─ src/movement.ts         索敌与移动
+│   ├─ src/skills.ts           技能机制
+│   ├─ src/synergies.ts        羁绊结算
+│   ├─ src/bot.ts              人机决策
+│   ├─ src/unit-data.ts        ← 策划表：干员（119 名）
+│   ├─ src/monster-data.ts     ← 策划表：野怪（13 种）
+│   ├─ src/trait-data.ts       ← 策划表：羁绊（21 个）
+│   ├─ src/item-data.ts        ← 策划表：藏品（70 件）
+│   ├─ src/covenant-data.ts    ← 策划表：盟约（16 份）
+│   ├─ src/ascension.ts        升变
+│   ├─ src/validate-data.ts    数据校验器（把错误翻译成人话）
+│   └─ test/                   166 个测试文件 / 2586 个用例
+├─ packages/server/          联机房间服务（6 位房间码，2–8 人）
+├─ packages/sim-cli/         终端战斗调试台
+├─ apps/web/                 客户端（Three.js 3D 场景 + 原生 DOM 的 2D UI）
+│   ├─ src/three/              棋盘、相机、棋子、各类战斗特效
+│   ├─ src/game/               布阵规则（纯逻辑，可测试）
+│   ├─ src/net/                联机协议与断线恢复
+│   ├─ src/ui-scale.ts         整屏 UI 缩放（基准 2560×1600，只缩不放）
+│   ├─ src/theme-ark.css       皮肤层（只换外观，不动逻辑）
+│   └─ src/main.ts             主编排：把上面全部接起来
+├─ scripts/                  验证、打包、素材抓取、表格导出
+└─ docs/                     设计与进度文档
 ```
 
 ---
@@ -132,15 +144,17 @@ AIRNIGHT/
 | 做什么 | 命令 |
 |---|---|
 | 装依赖 | `node scripts/pnpm.mjs install` |
-| 跑游戏客户端 | `node scripts/pnpm.mjs web` |
+| **双击直接玩**（自带应用窗口） | `启动游戏.cmd` |
+| 跑游戏客户端（浏览器） | `node scripts/pnpm.mjs web` |
 | 跑联机服务器 | `node scripts/pnpm.mjs server` |
 | 一键验证（4 步） | `node scripts/verify.mjs` |
-| **检查棋子数据表** | `node scripts/pnpm.mjs check` |
+| **检查数据表** | `node scripts/pnpm.mjs check` |
 | **联机全流程实测** | `node scripts/pnpm.mjs smoke` |
 | 看一场战斗战报 | `node scripts/pnpm.mjs sim -- --seed 123 --stats --board` |
 | 连打 200 场统计胜率 | `node scripts/pnpm.mjs sim -- --best-of 200 --quiet` |
 | 平衡性诊断（对抗矩阵） | `node scripts/pnpm.mjs balance` |
-| 打包出可发布的文件 | `node scripts/pnpm.mjs build` |
+| **打包成可发布目录 + zip** | `node scripts/pack-portable.mjs` |
+| 导出干员总表（xlsx） | `node node_modules/tsx/dist/cli.mjs scripts/export-operator-table.ts` |
 
 **`check` 是什么？** 改完棋子数据表之后跑它。它会把数据问题翻译成人话：
 哪个棋子、哪个字段、为什么错、怎么改。分「必须修」和「建议看看」两级。
@@ -224,27 +238,28 @@ node scripts/pnpm.mjs check
 
 ---
 
-## 还没做的部分
+## 当前进度
+
+**v0.3.4 的核心玩法已经完整**：选秀 → 备战买牌 → 布阵 → 自动战斗 → 结算，八个人各打各的，一回合一回合往下走。
 
 | 模块 | 状态 |
 |---|---|
-| 确定性战斗内核 | ✅ 19 个测试 |
-| 联机房间服务（6 位房间码，2–8 人） | ✅ 14 个端到端测试 |
-| 3D 棋盘 + 2D 角色/UI | ✅ 23 个测试 |
-| 客户端接入联机（大厅、房间码、等待房间、视角翻转） | ✅ 已打通 |
-| **棋子数据表校验器 + 加角色指南** | ✅ 25 个测试，能拦住打错字这类静默 bug |
-| 羁绊系统 | ⬜ **需要你的设计资料** |
-| 商店抽卡 / 经济 / 升级 | ⬜ **需要你的设计资料** |
-| 装备系统 | ⬜ **需要你的设计资料** |
-| 服务端权威校验阵容/经济（现在阵容校验在服务端，经济还在客户端） | ⬜ 等经济规则定下来一起做 |
-| 音效 / 技能特效 / 飘字 / 攻击动作 | ⬜ |
-| 真美术素材（现在是代码画的占位图） | ⬜ 换图只改一个文件 |
-| 断线重连恢复座位 | ⬜ 协议留了口子，未实现 |
-| 账号 / 天梯 / 匹配 | ⬜ 上线阶段再做 |
+| 确定性战斗内核 | ✅ 全定点数运算，同一颗种子必然打出同一场战斗 |
+| 联机房间服务 | ✅ 6 位房间码，2–8 人，局域网自动发现 |
+| 断线重连 | ✅ 掉线后回原座位 |
+| 3D 棋盘 + 2D 角色/UI | ✅ 相机环绕、拖拽布阵、悬停卡片 |
+| 干员 / 技能 / 羁绊 | ✅ 119 名干员、21 个羁绊、升变形态 |
+| 商店 / 经济 / 升星 | ✅ 买、卖、刷新、三合一升星 |
+| 藏品系统 | ✅ 70 件，含盟约转职藏品 |
+| 盟约系统 | ✅ 16 份，开局选秀 |
+| 人机 bot | ✅ 三档难度，会买牌、转职、卖废牌 |
+| 战斗表现 | ✅ Q 版逐帧动画、48 套特效、伤害飘字、震屏 |
+| 音频 | ✅ 124 首 BGM，游戏内可切 |
+| 数据表校验器 | ✅ 能把「羁绊拼错一个字母」这类静默 bug 拦下来 |
+| 账号 / 天梯 / 匹配 | ⬜ 没做，也暂时不打算做 |
+| 移动端 | ⬜ 有响应式布局，但没专门做触控适配 |
+| 服务端权威经济 | ⬜ 阵容在服务端校验，经济还在客户端 |
 
-**下一步最需要的东西**：填 `docs/设计资料收集表.md`。
-不用等全想完 —— 先给 3～6 个角色 + 2～3 个羁绊，我就把整条链路打通给你看。
-
-> 在你整理设计资料的同时，**加角色的工具链已经就绪了**：
-> 你可以自己先照着 `docs/怎么加角色.md` 往表里加几个角色试试，
-> 跑 `node scripts/pnpm.mjs check` 会立刻告诉你有没有写错。
+**关于「加角色」**：机制已经齐了，现在缺的是**数值平衡**。119 名干员的数值是照定位模板推的，
+不是调出来的。想改哪个直接改 `packages/shared/src/unit-stats.ts`，改完跑
+`node scripts/pnpm.mjs check` 会告诉你有没有写错。
