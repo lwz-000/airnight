@@ -1,0 +1,1634 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>失序协议 · 自走棋</title>
+    <!--
+      ★ 0.3.3：应用窗口的图标。
+      启动器用 Edge/Chrome 的 `--app` 模式开一扇**无地址栏**的窗口，
+      窗口标题栏和任务栏上的图标就是从这儿来的 —— 没有它，
+      Chromium 会画一个默认的灰地球，一眼又变回"网页"。
+      图由 `scripts/make-app-icon.py` 生成（黑底 + 荧光黄绿的「失」+ 四角框）。
+    -->
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <!-- 窗口染色（Win11 标题栏 / 移动端状态栏）跟着 0.3 的近黑底走 -->
+    <meta name="theme-color" content="#0b0c0e" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <!--
+      ★ 0.3 皮肤层：**必须排在 styles.css 之后**。
+      它只覆盖颜色/圆角/字号/描边，不动布局 —— 想回滚就删掉这一行。
+      详见文件头的说明。
+    -->
+    <link rel="stylesheet" href="/src/theme-ark.css" />
+  </head>
+  <body>
+    <!-- 3D 场景画布：铺满整个窗口，UI 浮在它上面 -->
+    <canvas id="stage"></canvas>
+
+    <!-- ============================================================
+         主界面
+         ============================================================
+         程序启动时显示这个。点「单人游戏」或联机相关按钮才进入游戏。
+         这样一打开不会直接砸进棋盘，也让联机入口更清楚。
+         ============================================================ -->
+    <div id="main-menu" class="menu-overlay">
+      <!--
+        ★★ 0.3.3：主界面是**单列三段的竖向布局**（原来是左右两栏）。
+            上 = 标题区 + 按钮 + 各种面板（.menu-main）
+            下 = 底部工具条（头像 / 设置 / 退出），和按钮列之间用一条发丝线切开
+        头像选择器已经改成隐藏式浮层（#avatar-picker），不再常驻右侧。
+      -->
+      <div class="menu-main">
+        <!--
+          ★ 0.3.3 标题区重排：加了一行小字眉标（kicker），
+          让"失序协议"下面那截荧光线有东西可以承接 —— 现在的排版是
+          眉标 → 主标题 → 副标题 → 一条短线 → 按钮，读起来有节奏。
+        -->
+        <div class="menu-heading">
+          <div class="menu-kicker">ARKNIGHTS · AUTO CHESS</div>
+          <div class="menu-title">失序协议</div>
+          <div class="menu-subtitle">8 人联机自走棋 · 明日方舟主题</div>
+        </div>
+
+        <!--
+          ★ 0.3.3 按钮重排：不再四颗一样大的竖排。
+          主操作（单人游戏）通栏；两颗联机入口并排成一行；测试模式沉到最下面一行小字级。
+          这样一眼就能分出"我平时玩哪个 / 我要联机 / 这是个工具入口"。
+        -->
+        <div id="menu-buttons" class="menu-buttons">
+          <button id="menu-solo" class="menu-btn primary-btn menu-btn-lead">单人游戏</button>
+          <div class="menu-btn-row">
+            <button id="menu-create" class="menu-btn ghost-btn">创建房间</button>
+            <button id="menu-join" class="menu-btn ghost-btn">加入房间</button>
+          </div>
+          <button id="menu-test" class="menu-btn ghost-btn menu-btn-quiet">测试模式</button>
+        </div>
+
+        <!-- 创建房间：填名字 -->
+        <div id="menu-panel-create" class="menu-panel hidden">
+          <div class="menu-panel-title">创建房间</div>
+          <div class="menu-panel-hint">名字 2-8 个字，可用汉字 / 字母 / 数字 / 常用符号</div>
+          <label class="menu-field">
+            <span>你的名字</span>
+            <input id="menu-name-create" class="net-input" placeholder="房主" maxlength="8" />
+          </label>
+          <div class="menu-panel-buttons">
+            <button id="menu-create-back" class="ghost-btn">返回</button>
+            <button id="menu-create-go" class="primary-btn">创建</button>
+          </div>
+        </div>
+
+        <!-- 加入房间：填名字 + 房间码 -->
+        <div id="menu-panel-join" class="menu-panel menu-panel-wide hidden">
+          <div class="menu-panel-title">加入房间</div>
+
+          <!--
+            ★★ 0.3.3 局域网房间列表（用户口径：自动搜索，已开局的也能看见只是进不去）
+            ============================================================
+            · 面板打开时每 2 秒问一次本机服务器（`lanScan`），关掉就停；
+            · 已开局 / 人满 / 版本不同 → 按钮禁用并写出原因，绝不"点了才知道"；
+            · 那间房里如果还有我的座位（重连索引命中）→ 按钮变「回到对局」，
+              点了直接本机换地址 + 令牌换回座位，不看房间号输入框。
+            列表内容由 main.ts 的 renderLanRooms() 生成，这里不写死任何一个房间。
+          -->
+          <div class="lan-rooms">
+            <div class="lan-rooms-head">
+              <span class="lan-rooms-title">局域网里的房间</span>
+              <span id="lan-rooms-state" class="lan-rooms-state mono">正在搜索…</span>
+              <button id="lan-rooms-refresh" class="lan-rooms-refresh" type="button" title="立刻重新搜索一次">
+                刷新
+              </button>
+            </div>
+            <div id="lan-rooms-list" class="lan-rooms-list"></div>
+            <div id="lan-rooms-empty" class="lan-rooms-empty">
+              还没搜到房间。让房主先点「创建房间」，并确认两台机器在同一个 WiFi / 组网里；
+              也可以直接在下面填房间号。
+            </div>
+          </div>
+
+          <div class="lan-rooms-or"><span>或者直接填房间号</span></div>
+
+          <div class="menu-panel-hint">名字 2-8 个字，可用汉字 / 字母 / 数字 / 常用符号</div>
+          <label class="menu-field">
+            <span>你的名字</span>
+            <input id="menu-name-join" class="net-input" placeholder="玩家" maxlength="8" />
+          </label>
+          <label class="menu-field">
+            <span>房间号</span>
+            <input
+              id="menu-code"
+              class="net-input mono"
+              placeholder="6 位，例如 A7K2M9"
+              maxlength="6"
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </label>
+          <div class="menu-hint">
+            房主创建房间后，把上面那 6 位房间号念给你，填进来就行。<br />
+            同一个 WiFi / 同一个组网（Radmin、UU 等）都能自动找到对方的房间；<br />
+            实在找不到时，让房主把「设置」里那个地址发给你手填。
+          </div>
+          <!--
+            ★ 0.1.4：断线重连恢复 —— 手动兜底入口。
+            自动回座（以及"本机正在对局中"那个浮层）依赖一次异步的本机会话探测，
+            它有可能会读不到（刚启动时进程正忙着发素材、或者走隧道时接口压根不存在）。
+            以前遇到这种情况玩家什么提示都收不到、也没有任何入口能自己试一次 ——
+            这一颗按钮就是那个"再试一次"，所以它**一直显示**：
+            真的有没打完的一局就带他回去，没有就明说一句。
+          -->
+          <button id="menu-join-recover" class="menu-recover-btn">
+            <span class="menu-reconnect-dot"></span>
+            <span>断线重连恢复</span>
+          </button>
+          <div class="menu-recover-hint">
+            上次那一局还没打完（掉线 / 关了浏览器）就点它。不知道房间号也能用。
+          </div>
+          <div class="menu-panel-buttons">
+            <button id="menu-join-back" class="ghost-btn">返回</button>
+            <button id="menu-join-go" class="primary-btn">加入</button>
+          </div>
+        </div>
+
+        <!-- 设置：服务器地址（内网穿透用）-->
+        <div id="menu-panel-settings" class="menu-panel hidden">
+          <div class="menu-panel-title">设置</div>
+          <label class="menu-field">
+            <span>服务器地址（用 SakuraFRP 等内网穿透时改这里）</span>
+            <input id="menu-server" class="net-input mono" placeholder="例如 frp.example.com:23456" />
+          </label>
+          <div class="menu-hint">
+            平时<b>不用改</b>：同一个局域网/组网里，用房间号就能自动找到房主的机器。<br />
+            什么时候要改：自动发现失败（少数组网工具会拦广播）、或者走内网穿透联机时，
+            在这里手填房主给的地址（形如 192.168.1.5:8787）。<br />
+            外网联机：填穿透服务给的地址。
+          </div>
+
+          <!--
+            ★ 0.3.4：自定义快捷键。
+            只允许**单键**（Esc / Tab / F1~F12 和 Ctrl/Alt 组合一律拒绝）——
+            组合键几乎全被浏览器占着（Ctrl+W 关标签、Ctrl+R 刷新…），
+            绑上去就是"按了没反应 / 直接把页面刷了"。
+          -->
+          <div class="menu-panel-subtitle">快捷键</div>
+          <div class="menu-hint">
+            点右边的按键，再按下你想用的键。<b>Esc</b> 固定用来关浮层，不能改；<br />
+            Ctrl / Alt / Shift 组合、Tab、F1~F12 都被浏览器占用，会被拒绝。
+          </div>
+          <div id="keybind-list" class="keybind-list"></div>
+          <button id="keybind-reset" class="ghost-btn keybind-reset" type="button">恢复默认快捷键</button>
+
+          <div class="menu-panel-buttons">
+            <button id="menu-settings-back" class="ghost-btn">返回</button>
+            <button id="menu-settings-save" class="primary-btn">保存</button>
+          </div>
+        </div>
+
+        <!--
+          ★ 0.3.2：「退出游戏」只在**用启动器打开**时出现。
+          黑框（cmd 窗口）藏起来之后，玩家没有"关掉那个黑窗口"这条路了，
+          所以真正的退出入口搬到网页上。
+          判据是这个页面地址里有没有 `?quit=<令牌>` —— 启动器会给本机那条地址加上，
+          局域网里的朋友拿到的链接没有，所以他们的界面里不会出现这个按钮。
+          单独跑 `pnpm static` 时也没有（没有令牌 = 不知道要关哪个进程）。
+        -->
+        <!--
+          ★★ 0.3.3 底部工具条（用户口径：设置 / 退出游戏重新排版）
+          以前这两颗是标题下面两行下划线小字，和"开始游戏"的主按钮挤在同一列里，
+          既不好点、也说不清哪个是"工具"。
+          现在是主界面底部的一条独立工具条：
+            左 = 当前头像（点开选头像，见下面的隐藏式头像面板）
+            右 = 设置 / 退出游戏（退出只在启动器打开时出现，判据见下）
+        -->
+        <div class="menu-toolbar">
+          <button id="avatar-open" class="menu-avatar-chip" type="button" title="选择头像（联机时会显示在玩家列表里）">
+            <span id="avatar-chip-box" class="menu-avatar-box"></span>
+            <span class="menu-avatar-meta">
+              <span class="menu-avatar-label">头像</span>
+              <span id="avatar-chip-name" class="menu-avatar-value">未选择</span>
+            </span>
+            <span class="menu-avatar-edit">更换</span>
+          </button>
+
+          <span class="menu-toolbar-sep"></span>
+
+          <button id="menu-settings-open" class="menu-tool-btn">设置</button>
+          <!--
+            ★ 0.3.2：「退出游戏」只在**用启动器打开**时出现。
+            黑框（cmd 窗口）藏起来之后，玩家没有"关掉那个黑窗口"这条路了，
+            所以真正的退出入口搬到网页上。
+            判据是这个页面地址里有没有 `?quit=<令牌>` —— 启动器会给本机那条地址加上，
+            局域网里的朋友拿到的链接没有，所以他们的界面里不会出现这个按钮。
+            单独跑 `pnpm static` 时也没有（没有令牌 = 不知道要关哪个进程）。
+          -->
+          <button id="menu-quit" class="menu-tool-btn danger hidden" title="关掉游戏后台服务（黑框已隐藏，退出请用这里）">
+            退出游戏
+          </button>
+        </div>
+        <div id="menu-status" class="menu-status">未连接服务器</div>
+
+        <!--
+          ★ 0.3.4 新手教程入口（用户口径：主界面角落，很小的按钮）
+          + 版本号（用户口径：在教程旁边显示）。
+          第一次打开游戏会自动弹一次；之后想再看就点这颗。
+        -->
+        <div class="menu-corner">
+          <span id="app-version" class="app-version" title="当前版本">v—</span>
+          <button
+            id="tutorial-open"
+            class="tutorial-open-btn"
+            type="button"
+            title="新手教程（随时可以再看一遍）"
+          >?</button>
+        </div>
+      </div>
+
+      <!--
+        干员头像选择（0.0.2 需求第 16 条 + 追加需求第 4 条）
+        ============================================================
+        头像用的是干员头像（assets/units/opNN.png，和商店卡片同一套图）。
+        选完存在 localStorage，联机建房/进房时发给服务器，
+        然后显示在房间等待界面和右侧「玩家」列表里。
+
+        【只列干员，不列召唤物】
+        召唤物（summon_pillar / summon_lion / summon_trap）不是干员，
+        服务器的头像白名单也只认 opNN —— 选了会被当成"没选"丢掉。
+        所以渲染时按 `opNN` 这个形状过滤（见 main.ts 的 renderAvatarPicker）。
+
+        【为什么要有那个大预览框？】
+        以前只有一行小字写着"未选择"，选完也看不出自己选了什么。
+        现在左边一个大方块实时显示当前头像，右边是可滚动的候选墙。
+      -->
+      <!--
+        ★★ 0.3.3 头像选择改成**隐藏式**（用户口径）
+        ============================================================
+        以前它是主界面右侧一整块常驻面板（440px 宽 + 头像墙），
+        于是主界面永远是"左边几个按钮、右边一大片格子"，重心全在选头像上 ——
+        可玩家进游戏 99% 的时间根本不看它。
+
+        现在它是一张**浮层**：默认 hidden，点底部工具条那个头像块才出现；
+        背景压暗、点空白处或 Esc 关闭、右上角还有一个 ✕。
+        关掉之后主界面只剩"标题 → 按钮 → 工具条"三块，干净多了。
+
+        ★ 结构：外层 #avatar-picker 是**全屏遮罩**（点它自己就关），
+          内层 .avatar-card 才是那块面板 —— 这样"点外面关闭"不用再加一个兄弟节点。
+        ★ 下面的 id 一个都没改（#avatar-grid / #avatar-picker-preview / #avatar-tabs…），
+          renderAvatarPicker 那套渲染逻辑一行都不用动。
+      -->
+      <div id="avatar-picker" class="avatar-picker hidden">
+        <div class="avatar-card">
+          <div class="avatar-card-head">
+            <div class="avatar-card-heading">
+              <div id="avatar-picker-title" class="avatar-picker-title">干员头像</div>
+              <div class="avatar-picker-sub">联机时会显示在玩家列表里 · 点一下选用，再点一次取消</div>
+            </div>
+            <div class="avatar-card-tools">
+              <!-- ★ 右上角显示"一共多少位可选"（头像墙可滚动，不写数字会以为就这些） -->
+              <span id="avatar-picker-count" class="avatar-picker-count">—</span>
+              <button id="avatar-close" class="avatar-close-btn" type="button" title="关闭（Esc）">✕</button>
+            </div>
+          </div>
+
+          <!-- ★ 分组条（干员 / 官方个人头像的四类）。由 main.ts 的 renderAvatarTabs 填充 -->
+          <div id="avatar-tabs" class="avatar-tabs"></div>
+
+          <div class="avatar-picker-body">
+            <div id="avatar-picker-preview" class="avatar-picker-preview"></div>
+            <div class="avatar-picker-meta">
+              <span class="avatar-picker-label">当前头像</span>
+              <span id="avatar-picker-name" class="avatar-picker-name">未选择（默认头像）</span>
+              <span class="avatar-picker-hint">不选也能玩 —— 房间里会显示一个默认方块</span>
+            </div>
+          </div>
+
+          <div id="avatar-grid" class="avatar-grid"></div>
+        </div>
+      </div>
+
+      <!--
+        ★ 0.1.4：右下角「回到对局」。
+        【为什么要有它？】断线之后自动重连偶尔会失败（网络刚回来的那一下、
+        或者玩家手动点过"留在菜单"）。以前只能靠再点一次「加入房间」把房间号
+        重新输一遍 —— 而房间号他多半已经忘了。
+        这个按钮会**自己检测**本机进程里有没有"还没打完的那一局"，
+        有才出现；点一下就按原身份连回去。
+      -->
+      <button id="menu-reconnect" class="menu-reconnect hidden">
+        <span class="menu-reconnect-dot"></span>
+        <span id="menu-reconnect-text">回到对局</span>
+      </button>
+    </div>
+
+    <!-- ============================================================
+         房间等待界面
+         ============================================================
+         ★★ 0.3.3 重排（用户口径：把房间界面做得和其他界面相似）
+
+         【以前是什么样？】
+         一条竖向居中的流水线：标题 → 巨大的房间号 → 提示 → 玩家列表 →
+         规则一行字 → 状态 → 三颗按钮，全部单列堆在屏幕正中。
+         问题有三个：
+           · 和盟约选秀页/对局内界面**不像一套东西**（那些都是"有边框的面板"，
+             这里是散落的一堆元素，没有容器）；
+           · 房间号占掉一整行、玩家列表只有 240px 高，8 个人要滚；
+           · 玩家多了以后"谁准备好了"和"我要按什么"离得很远。
+
+         【现在是什么样？】
+         和 `#settings-overlay` / `#covenant-overlay` 同一套骨架：
+           外框 .lobby-wrap（有边、有底、定宽）
+             ├ head   左=标题/副标题，右=房间设置（房主专有）
+             ├ code   房间号 + 说明（一条横向信息条，不再是主角）
+             ├ body   左=玩家列表（8 行放得下），右=本局规则摘要
+             └ foot   状态文字 + 底部三颗按钮
+         这样它和设置面板、盟约页、对局界面共用同一种"面板语言"。
+
+         ★ 所有 id 都保留（#lobby-code / #lobby-players / #lobby-rules /
+           #lobby-status / #btn-room-settings / #lobby-bot-add 及三颗按钮）——
+           renderLobby 只改内容不改结构；新增的只有只读的 #lobby-count。
+         ============================================================ -->
+    <div id="lobby-overlay" class="menu-overlay hidden">
+      <div class="lobby-wrap">
+        <header class="lobby-head">
+          <div class="lobby-heading">
+            <div class="lobby-kicker">MULTIPLAYER ROOM</div>
+            <div class="lobby-title">房间等待</div>
+            <div class="lobby-sub">点房间号复制给朋友 · 同一 WiFi / 组网会自动发现</div>
+          </div>
+          <!--
+            ★ 0.3 房间设置入口：**只有房主看得到**（权限判据在服务端，这里只是不给别人看到）。
+            挪进 head 右侧：它是"房主的工具"，和标题同一行最自然。
+          -->
+          <button id="btn-room-settings" class="ghost-btn lobby-settings-btn hidden" title="改这一局的规则（只有房主能改）">
+            房间设置
+          </button>
+        </header>
+
+        <!-- 房间号：一条横向信息条（原来是一个 44px 的巨型数字占整屏） -->
+        <div class="lobby-code-row">
+          <span class="lobby-code-label">房间号</span>
+          <div class="lobby-code-big mono" id="lobby-code">------</div>
+          <span class="lobby-code-hint">点击复制</span>
+        </div>
+
+        <div class="lobby-body">
+          <section class="lobby-col lobby-col-players">
+            <div class="lobby-col-head">
+              <span class="lobby-col-title">玩家</span>
+              <!-- ★ 0.3.3：8 人上限写清楚（以前只有进不去的时候才从报错里知道） -->
+              <span id="lobby-count" class="lobby-count mono">1 / 8</span>
+            </div>
+            <div id="lobby-players" class="lobby-players"></div>
+            <!--
+              ★★ 0.3.3：添加人机（**只有房主看得到**，服务端还会再验一次房主身份）。
+              玩法：选难度 -> 点「添加人机」；每加一台都占一个座位。
+              已经在房间里的人机，可以在上面的玩家列表里直接改难度 / 移除。
+            -->
+            <div id="lobby-bot-add" class="lobby-bot-add hidden">
+              <select id="lobby-bot-difficulty" class="net-input lobby-bot-select" title="人机难度">
+                <option value="easy">简单</option>
+                <option value="normal" selected>普通</option>
+                <option value="hard">困难</option>
+              </select>
+              <button id="btn-add-bot" class="ghost-btn" title="加一台人机，和真人一样占一个座位">
+                添加人机
+              </button>
+            </div>
+          </section>
+
+          <aside class="lobby-col lobby-col-rules">
+            <div class="lobby-col-head">
+              <span class="lobby-col-title">本局规则</span>
+            </div>
+            <div id="lobby-rules" class="lobby-rules hidden"></div>
+            <div class="lobby-side-hint">
+              规则在「开始游戏」那一刻生效，开局后不能再改。房主随时可以调整，改完立刻同步给所有人。
+            </div>
+          </aside>
+        </div>
+
+        <footer class="lobby-foot">
+          <div id="lobby-status" class="menu-status"></div>
+          <div class="overlay-buttons">
+            <button id="btn-lobby-leave" class="ghost-btn">离开房间</button>
+            <button id="btn-lobby-ready" class="ghost-btn">准备好了</button>
+            <button id="btn-lobby-start" class="primary-btn">开始游戏</button>
+          </div>
+        </footer>
+      </div>
+    </div>
+
+    <!-- ============================================================
+         ★★ 0.3 盟约选秀页（多人模式开局前）
+         ============================================================
+         结构固定三层：
+           上：玩家头像 + 名字（谁选了哪个一目了然）
+           中：左 = 盟约卡（只有头像和名字），右 = 点开之后的详细说明
+           下：右下角「选择盟约」—— 只有轮到自己时才亮
+         卡片内容由 main.ts 的 renderCovenantPage() 按 shared 的 COVENANTS 生成，
+         这里不写死任何一个盟约。
+         ============================================================ -->
+    <div id="covenant-overlay" class="menu-overlay hidden">
+      <div class="covenant-wrap">
+        <header class="covenant-head">
+          <div class="covenant-heading">
+            <div class="covenant-title">盟约</div>
+            <div class="covenant-sub">选一项带入本局 · 被选走的不再可选</div>
+          </div>
+          <div class="covenant-clock">
+            <span id="covenant-timer" class="mono">30</span><em>秒</em>
+          </div>
+        </header>
+
+        <div id="covenant-players" class="covenant-players"></div>
+
+        <div class="covenant-main">
+          <div id="covenant-grid" class="covenant-grid"></div>
+          <aside id="covenant-detail" class="covenant-detail">
+            <div class="covenant-detail-empty">点一张盟约卡看详细效果</div>
+          </aside>
+        </div>
+
+        <footer class="covenant-foot">
+          <div id="covenant-hint" class="covenant-hint"></div>
+          <!--
+            ★ 0.3：**只有单机**会出现这颗「跳过」（联机是轮流的，不能不选）。
+            留它的理由：万一某条盟约的代码有问题，玩家总得能开局 ——
+            不能因为一个可选机制把整个单机入口堵死。
+          -->
+          <button id="covenant-skip" class="ghost-btn hidden">跳过（不带盟约）</button>
+          <button id="covenant-pick" class="primary-btn" disabled>选择盟约</button>
+        </footer>
+      </div>
+    </div>
+
+    <!-- ============================================================
+         ★★ 0.3 盟约效果弹窗（对局内的玩家列表点盟约时打开）
+         ============================================================ -->
+    <div id="covenant-info" class="menu-overlay hidden">
+      <div class="confirm-card">
+        <div id="covenant-info-name" class="confirm-title"></div>
+        <div id="covenant-info-brief" class="covenant-detail-brief" style="margin-bottom: 10px"></div>
+        <div id="covenant-info-body" class="confirm-message"></div>
+        <div class="overlay-buttons">
+          <button id="covenant-info-ok" class="primary-btn">知道了</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================
+         ★ 0.3 名字被拒的提示弹窗
+         ============================================================
+         为什么不用 toast？建房/进房时玩家的注意力在输入框上，
+         一条 1.5 秒后自动消失的小字很容易被完全错过 ——
+         用户报的"名字不合格时没提示"就是这个观感。
+         ============================================================ -->
+    <div id="name-alert" class="menu-overlay hidden">
+      <div class="confirm-card">
+        <div class="confirm-title">名字不能用</div>
+        <div id="name-alert-msg" class="confirm-message"></div>
+        <div id="name-alert-hint" class="confirm-message" style="color: var(--text-dim)"></div>
+        <div class="overlay-buttons">
+          <button id="name-alert-ok" class="primary-btn">回去改</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================
+         ★ 0.3 房间设置面板（房主专用）
+         ============================================================
+         内容由 main.ts 的 renderSettingsPanel() 按 shared 的 ROOM_SETTINGS_LIMITS 生成 ——
+         不要在 HTML 里写死 min/max：那是第二份真相，改范围时会走散。
+         ============================================================ -->
+    <div id="settings-overlay" class="menu-overlay hidden">
+      <div class="settings-card">
+        <div class="confirm-title">房间设置</div>
+        <div class="settings-hint">
+          这些规则在<b>点开始游戏那一刻</b>生效，开局后不能再改。默认值就是原本的玩法；
+          玩家在开局前随时可以改，改了会立刻同步给房间里所有人。
+        </div>
+        <div id="settings-body" class="settings-body"></div>
+        <div id="settings-error" class="settings-note"></div>
+        <div class="overlay-buttons">
+          <button id="btn-settings-default" class="ghost-btn">恢复默认</button>
+          <button id="btn-settings-close" class="primary-btn">完成</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================
+         游戏内 UI（主界面关了之后才显示）
+         ============================================================ -->
+    <div id="game-hud" class="hidden">
+      <!-- 顶部状态栏 -->
+      <header id="topbar">
+        <button id="btn-back-menu" class="ghost-btn back-btn" title="退出本局并返回大厅">← 返回大厅</button>
+        <div class="brand">失序协议</div>
+
+        <div class="stat">
+          <span class="stat-label">生命</span>
+          <span id="stat-hp" class="stat-value hp">100</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">等级</span>
+          <span id="stat-level" class="stat-value">1</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">人口</span>
+          <span id="stat-pop" class="stat-value">0 / 1</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">回合</span>
+          <span id="stat-round" class="stat-value">1</span>
+        </div>
+        <!--
+          ★ 0.2.2：距离下一个**野怪回合**还剩几回合。
+          单人和多人都有（两边顶栏是同一套 DOM）——
+          野怪回合是"该攒钱还是该花钱"的关键节点，提前几回合看到才好规划。
+          数字的唯一来源是 shared 的 `monsterRoundCountdown`（别在这里算 `(r-2)%7`）。
+        -->
+        <div class="stat" id="stat-monster-wrap">
+          <span class="stat-label">野怪</span>
+          <span id="stat-monster" class="stat-value">6 回合后</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">阶段</span>
+          <span id="stat-phase" class="stat-value">布阵</span>
+        </div>
+        <!-- 单机模式：本波敌人是什么（难度按回合递增，提前告诉玩家好规划） -->
+        <div id="wave-hint" class="wave-hint hidden"></div>
+
+        <div class="spacer"></div>
+        <!--
+          ★ 0.0.3 修改器入口：位置就按需求放在「视角」徽标的**左边**。
+          只有测试模式里才显示（renderModifier 控制 hidden），对局中才有意义。
+        -->
+        <!--
+          ★ 0.0.3 测试沙盒「切换阵营」：就放在「修改器」按钮旁边。
+          只有测试模式才显示（renderSideSwitch 控制 hidden）。
+          点一下在蓝方（左半场）/ 红方（右半场）之间切换"我现在操作谁" ——
+          两侧的商店 / 金币 / 备战席 / 阵容 / 羁绊**完全独立**。
+        -->
+        <button
+          id="btn-switch-side"
+          class="ghost-btn side-switch-btn hidden"
+          title="切换阵营：在蓝方（左半场）/ 红方（右半场）之间切换你正在操作的那一套"
+        >
+          切换到红方 ▶
+        </button>
+        <button
+          id="btn-modifier"
+          class="ghost-btn modifier-btn hidden"
+          title="修改器（只有测试模式能用）：无限金币 / 加钱 / 无视人口上限 / 改等级 / 直接获得干员（含野怪）"
+        >
+          修改器
+        </button>
+        <!--
+          视角：滚轮拉近（最远就是默认视角），拉近之后可以拖动平移。
+          做成一个可点的徽标：点一下回到最远视角，顺便把"能滚轮"这件事说出来
+          （否则没有玩家会去试滚轮）。
+        -->
+        <span
+          id="zoom-hint"
+          class="zoom-hint hidden"
+          title="滚轮拉近 / 拉远视角；拉近后按住棋盘拖动可以平移。点这里回到最远视角"
+          >视角 ×1.0</span
+        >
+        <!--
+          右上角：右侧栏的视图切换（0.0.2）。
+          以前这里只有一个「日志」按钮（点一下收起/展开右侧栏）。
+          现在右侧栏有三种内容，用一个切换器来表达：
+            日志（战斗过程 / 伤害 / 羁绊） · 玩家（血量/等级/连胜连败） · 藏品（★ 0.0.3 做好）
+          再点一次当前项 = 收起右侧栏（保留原来"能收起"的能力）。
+        -->
+        <div id="sidebar-tabs" class="sidebar-tabs">
+          <button class="sidebar-tab active" data-side-tab="log" title="战斗日志（再点一次收起右侧栏）">
+            日志
+          </button>
+          <button class="sidebar-tab" data-side-tab="players" title="玩家列表：血量 / 等级 / 连胜连败">
+            玩家
+          </button>
+          <button
+            class="sidebar-tab"
+            data-side-tab="collection"
+            title="藏品（装备）：穿戴藏品拖到干员身上，共享藏品拖到共享装备位"
+          >
+            藏品
+          </button>
+        </div>
+      </header>
+
+      <!-- 战斗播放控制条 -->
+      <div id="battle-bar" class="hidden">
+        <div class="battle-row">
+          <div class="battle-side team0">
+            <span id="team-name-0" class="team-name">我方</span>
+            <div class="hp-track"><div id="hp0" class="hp-fill"></div></div>
+          </div>
+          <div class="battle-center">
+            <!-- 这场在跟谁打（联机时显示对手名字，单机显示"人机波次"） -->
+            <span id="battle-opponent" class="battle-opponent hidden"></span>
+            <button id="btn-pause" class="ghost-btn">⏸</button>
+            <input id="seek" type="range" min="0" max="1000" value="0" />
+            <span id="battle-time" class="mono">0.0s</span>
+            <div class="speed-group" id="speed-group"></div>
+          </div>
+          <div class="battle-side team1">
+            <div class="hp-track"><div id="hp1" class="hp-fill enemy"></div></div>
+            <span id="team-name-1" class="team-name">敌方</span>
+          </div>
+        </div>
+
+        <!-- ============================================================
+             ★ 0.1.1：战斗中切换观战哪一场
+             ============================================================
+             房间里 3 人以上时同一回合会有 2 场以上同时开打，这一条给玩家切过去看。
+             数据来自服务器广播的每一条 battleStart（见 main.ts 的 LiveBattle）。
+
+             ★ 必须**挂在战斗条里面**：战斗条本身是 `position: fixed` 的浮层，
+               在它后面再放一个静态元素的话，那个元素会被排到文档流的最上面去
+               （看着就是"DOM 里有、屏幕上却找不到"）。做成条里的第二行就永远贴着它。
+             ============================================================ -->
+        <div id="spectate-bar" class="spectate-bar hidden"></div>
+      </div>
+
+      <!-- 左侧羁绊面板：列表和详情两个视图，点击切换（详情不再单独弹窗） -->
+      <aside id="traits">
+        <!-- 视图一：羁绊列表 -->
+        <div id="traits-list-view">
+          <div class="panel-title">羁绊 <span class="panel-title-hint">点一下看详情</span></div>
+          <!--
+            【为什么要有这行小字？】
+            羁绊是按「不同干员」计数的：同一个干员上两个也只算 1 个。
+            不讲清楚的话，玩家买了第二个同名干员、发现左边的数字没变，
+            第一反应是"游戏坏了"。这行字就是提前把这件事说清楚。
+          -->
+          <div class="panel-note">按<strong>不同干员</strong>计数：同一个干员上多个只算 1 个</div>
+          <div id="trait-list" class="trait-list"></div>
+
+          <!--
+            ★ 0.3.4：图鉴入口。放在羁绊列表**下方**——
+            它俩是同一类信息（"我现在有什么羁绊" / "我想凑什么羁绊"），
+            摆在一起找起来最顺手。点开是「图鉴 + 组队器」大弹窗。
+          -->
+          <button id="codex-open" class="codex-open-btn" type="button" title="查看所有棋子与藏品，并用组队器规划阵容">
+            <span class="codex-open-text">图鉴</span>
+          </button>
+        </div>
+
+        <!--
+          视图二：单个羁绊的详情。
+          做成「在左侧面板内展开」而不是弹窗 ——
+          弹窗会盖住棋盘，而且这个信息本来就是左侧面板的内容，
+          就地展开更自然、也不挡操作。
+        -->
+        <div id="traits-detail-view" class="hidden">
+          <button id="detail-back" class="ghost-btn detail-back">← 返回列表</button>
+          <div class="detail-header">
+            <span id="detail-name" class="detail-name">羁绊</span>
+            <span id="detail-kind" class="detail-kind">种族</span>
+          </div>
+          <div id="detail-count" class="detail-count"></div>
+          <div class="detail-section-title">档位与效果</div>
+          <div id="detail-tiers" class="detail-tiers"></div>
+          <div class="detail-section-title">拥有这个羁绊的干员</div>
+          <div id="detail-units" class="detail-units"></div>
+        </div>
+      </aside>
+
+      <!-- 右侧：可切换的三块内容（日志 / 玩家 / 藏品） -->
+      <aside id="sidebar">
+        <!--
+          视图一：日志
+          ============================================================
+          伤害统计 + 羁绊进行时 + 战斗过程，原来散在右侧栏里的三块。
+          ★ 玩家列表从这里搬走了（0.0.2）：它挪到了"视图二"，
+          因为右侧栏一屏塞不下四块，而且玩家列表和战斗日志
+          本来就不会同时看（一个布阵时看、一个战斗时看）。
+        -->
+        <div id="side-pane-log" class="side-pane">
+          <!--
+            伤害统计：只统计「我方」的干员，分三栏 ——
+            造成的伤害 / 受到的伤害 / 治疗量。
+            这是玩家最关心的信息（自己的棋子打得怎么样、谁在挨打）。
+          -->
+          <div class="panel-block">
+            <div class="panel-title">我方干员伤害</div>
+            <div class="dmg-header">
+              <span class="dmg-col-name"></span>
+              <span class="dmg-col">造成</span>
+              <span class="dmg-col">承受</span>
+              <span class="dmg-col">治疗</span>
+            </div>
+            <div id="damage-stats" class="damage-stats">
+              <div class="damage-empty">开始战斗后会显示每个干员的输出与承伤</div>
+            </div>
+          </div>
+
+          <!--
+            羁绊日志：只显示"有进行时"的羁绊
+            ============================================================
+            拉特兰的「累计攻击 N 次后齐射」平时完全看不见 ——
+            玩家只能看到突然掉一截血，不知道那是攒满发动了。
+            这里把"攒到第几次了"实时显示出来，发动时往下面的日志里写一行。
+            罗德岛的「生命值最高的干员吃加成」同理：谁是那个"最高的"一直在变。
+            没有这类羁绊时整块隐藏（绝大多数对局用不到，不占地方）。
+          -->
+          <div id="trait-log-block" class="panel-block hidden">
+            <div class="panel-title">羁绊详情 <span class="panel-title-hint">进行时</span></div>
+            <div id="trait-live" class="trait-live"></div>
+            <div id="trait-log" class="trait-log"></div>
+          </div>
+
+          <!--
+            ★ 0.3.2 阿米娅升变任务进度（**常驻**，只有选了「不容拒绝」的玩家才显示）
+            ============================================================
+            为什么要常驻在日志面板里、而不是弹一次就完：
+            这条任务是"边打边攒"的（参战 5 场 / 胜场 3 / 伤害 15 万），
+            玩家随时要能看到自己还差多少，否则会以为"打了半天白打"。
+            文案和百分比都由 shared 的 `amiyaQuestView` 算，这里只负责画。
+          -->
+          <div id="amiya-quest-block" class="panel-block hidden">
+            <div class="panel-title">
+              阿米娅 · 升变任务 <span id="amiya-quest-hint" class="panel-title-hint">进行时</span>
+            </div>
+            <div id="amiya-quest" class="amiya-quest"></div>
+          </div>
+
+          <div class="panel-block grow">
+            <div class="panel-title">战斗过程 <span class="panel-title-hint">我方视角</span></div>
+            <div id="battle-log" class="log"></div>
+          </div>
+        </div>
+
+        <!--
+          视图二：玩家列表（联机）
+          ============================================================
+          显示每个人的头像 / 血量 / 等级 / 当前连胜连败。
+          布阵阶段点一个玩家，棋盘就切过去看他的阵容。
+        -->
+        <div id="side-pane-players" class="side-pane hidden">
+          <div class="panel-block grow">
+            <div class="panel-title">
+              玩家 <span class="panel-title-hint">点头像看他的棋盘</span>
+            </div>
+            <div id="player-strip-list" class="player-list"></div>
+            <button id="btn-back-my-board" class="ghost-btn hidden">← 回到我的棋盘</button>
+          </div>
+        </div>
+
+        <!--
+          视图三：藏品（装备）★ 0.0.3
+          ============================================================
+          从上到下五块：
+            ① 穿戴藏品（10 格）—— 拖到场上/备战席的**干员**身上才生效，
+               每个干员最多挂 2 件。
+            ② 共享藏品（5 格）—— 不直接生效，要先拖到下面的共享装备位。
+            ③ 共享装备位（4 格）—— 这里的共享藏品对**全队**生效
+               （有全队属性/机制，也有"每回合给钱"这种经济效果）。
+            ④ 共享藏品效果（★ 0.1.1）—— 把"现在到底生效着什么"列出来，
+               数据源是 `activeItemEffects()`：装备位里的共享藏品 +
+               永久效果（失落之钥）+ 跨回合成长的当前层数。
+            ⑤ 删除藏品（最下方）—— 把任意格子里的藏品拖进来就销毁。
+               删除**不可撤销**，所以这块做成红色虚线边框，视觉上就当心一点。
+
+          【为什么穿戴藏品有 10 格，共享藏品只有 5 + 4？】
+          穿戴藏品是"给某个干员的装备"，需要备货（等抽到合适的人再挂）；
+          共享藏品是"全队光环"，一局里能同时开的就那么几个，
+          分出来 5 格仓库 + 4 格装备位反而比 9 格混在一起更好读。
+
+          【★ 代号与话术】
+          数据层里这两类叫 A 类 / B 类（`item.slot`），那只是**代号**。
+          玩家看到的文字**一律**是「穿戴藏品 / 共享藏品」——
+          玩家只需要知道"它是穿在干员身上的，还是全队共享的"。
+
+          格子数量不写死在这里：主循环按 shared 的
+          ITEM_A_SLOTS / ITEM_B_SLOTS / ITEM_B_EQUIP_SLOTS 渲染 ——
+          以后改数值不用动 HTML。
+        -->
+        <div id="side-pane-collection" class="side-pane hidden">
+          <div class="panel-block grow">
+            <div class="panel-title">
+              藏品 <span class="panel-title-hint">拖到干员 / 装备位</span>
+            </div>
+            <div class="panel-note" id="item-note">
+              穿戴藏品拖到<strong>干员</strong>身上（每人 2 件）· 共享藏品拖到<strong>共享装备位</strong>（全队生效）·
+              同栏内拖动可<strong>互换位置</strong>
+            </div>
+
+            <!--
+              ⓪ ★ 0.3.2 升变之证专用栏位
+              ============================================================
+              只有「阿米娅 · 不容拒绝」这条盟约的升变任务**真的发到证**时才出现
+              （常态玩家看不到这一块）。
+              它和上面那 10 格穿戴藏品栏是**两套独立的容量**：
+              任务发的证不会被"穿戴藏品栏满了"挤掉，也不会占玩家的格子。
+            -->
+            <div id="item-cert-block" class="item-cert-block hidden">
+              <div class="item-sub-title">
+                升变之证 <span id="item-cert-count" class="item-count mono"></span>
+              </div>
+              <div class="item-note">
+                盟约任务发的证 · 拖到<strong>阿米娅</strong>身上即可升变（用掉即消失）
+              </div>
+              <div id="item-slots-cert" class="item-slots item-slots-cert"></div>
+            </div>
+
+            <!-- ① 穿戴藏品（A 类）存放栏杆 -->
+            <div class="item-sub-title">
+              穿戴藏品 <span id="item-a-count" class="item-count mono"></span>
+            </div>
+            <div id="item-slots-a" class="item-slots"></div>
+
+            <!-- ② 共享藏品（B 类）存放栏杆 -->
+            <div class="item-sub-title">
+              共享藏品 <span id="item-b-count" class="item-count mono"></span>
+            </div>
+            <div id="item-slots-b" class="item-slots"></div>
+
+            <!-- ③ 共享装备位：共享藏品拖进来才生效 -->
+            <div class="item-sub-title">
+              共享装备位 <span id="item-bequip-count" class="item-count mono"></span>
+            </div>
+            <div id="item-slots-bequip" class="item-slots item-slots-equip"></div>
+
+            <!--
+              ④ 共享藏品效果 ★ 0.1.1
+              ============================================================
+              这里显示**此刻真正在对局里生效**的全队效果（谁给的、什么效果）。
+              和上面的「共享装备位」的区别：
+                · 装备位回答"我把哪几件放进去了"（摆件）
+                · 这里回答"所以现在到底生效着什么"（结果）
+              两者不是一回事 —— 比如「失落之钥」装上就销毁、本体早不在栏里了，
+              但它的永久效果一直在生效；「生还者合约」会叠层、数值每回合都在变。
+              没有这一栏的话，玩家只能靠记忆拼"我现在到底有哪些效果"。
+            -->
+            <div class="item-sub-title">
+              共享藏品效果 <span id="item-effect-count" class="item-count mono"></span>
+            </div>
+            <div id="item-effect-list" class="item-effect-list"></div>
+
+            <!-- ⑤ 删除区：拖进来即销毁 -->
+            <div id="item-delete-zone" class="item-delete-zone" title="把藏品拖到这里删除">
+              <span class="item-delete-icon">🗑</span>
+              <span class="item-delete-text">删除藏品</span>
+              <span class="item-delete-hint">拖到此处即销毁，不可撤销</span>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- 底部：金币/等级 + 商店 + 备战席 -->
+      <footer id="dock">
+        <div class="dock-left">
+          <!--
+            ★★ 0.2 商店回合：开关按钮（**只在商店回合出现**）。
+            用户口径「开关按钮在金币上方位置」⇒ 就摆在金币那一行正上方。
+            商店回合里玩家还要布阵/换装备，所以弹窗**必须能关掉**，
+            关掉之后靠这个按钮再叫出来（fever 那种"不能关"的口径不适用这里）。
+          -->
+          <button id="btn-shop-round" class="shop-round-toggle hidden" title="打开 / 关闭坎诺特的商店">
+            <span class="shop-round-toggle-icon">🛒</span>
+            <span>坎诺特的商店</span>
+            <span id="shop-round-toggle-timer" class="shop-round-toggle-timer mono">90s</span>
+          </button>
+          <div class="gold-row">
+            <span class="gold-label">金币</span>
+            <span id="dock-gold" class="gold-value">3</span>
+            <!-- 连胜/连败（连胜 +N 金、连败补偿 N 金）显示在金币旁边 -->
+            <span id="dock-streak" class="streak-badge hidden"></span>
+          </div>
+          <div class="level-row">
+            <span class="level-badge">Lv<span id="dock-level">1</span></span>
+            <div class="xp-track" title="经验进度">
+              <div id="dock-xp" class="xp-fill"></div>
+            </div>
+            <span id="dock-xp-text" class="xp-text mono">0/3</span>
+          </div>
+          <div class="dock-btn-row">
+            <button id="btn-buy-xp" class="ghost-btn wide" title="花 4 金买 4 点经验（快捷键 F）">
+              买经验 <span class="cost">4</span>
+            </button>
+          </div>
+          <div class="dock-hint">人口上限 = 等级</div>
+        </div>
+
+        <div class="dock-center">
+          <div class="shop-header">
+            <span class="shop-title">商店</span>
+            <span id="shop-odds" class="shop-odds"></span>
+          </div>
+          <div id="shop-slots" class="shop-slots"></div>
+          <div class="dock-btn-row">
+            <button id="btn-refresh" class="ghost-btn" title="刷新商店（快捷键 D）">
+              刷新商店 <span class="cost">2</span><span id="btn-refresh-badge" class="perk-badge hidden"></span>
+            </button>
+            <button id="btn-lock" class="ghost-btn lock-btn" title="锁定后回合结束不会自动刷新（快捷键 E）">
+              🔓 未锁定
+            </button>
+            <button id="btn-battle" class="primary-btn">开始战斗</button>
+          </div>
+        </div>
+
+        <div class="dock-right">
+          <div class="bench-header">
+            <span id="bench-title" class="shop-title">备战席</span>
+            <span id="bench-hint" class="bench-hint">拖到场上 · 可换位 · 右键卖掉</span>
+          </div>
+          <div id="bench-slots" class="bench-slots"></div>
+        </div>
+      </footer>
+    </div>
+
+    <!-- ============================================================
+         干员信息小窗口
+         ============================================================
+         点场上（或备战席）的干员就弹出来，显示属性、羁绊、技能。
+         做成"跟着棋子走的小卡片"而不是居中大弹窗：
+         居中弹窗会盖住棋盘，而看棋子信息时你一定还在盯着棋盘。
+         ============================================================ -->
+    <div id="unit-info" class="unit-info hidden">
+      <button id="unit-info-close" class="ghost-btn unit-info-close" title="关闭">✕</button>
+      <div class="unit-info-head">
+        <div id="unit-info-portrait" class="unit-info-portrait"></div>
+        <div class="unit-info-title">
+          <div id="unit-info-name" class="unit-info-name">干员</div>
+          <div id="unit-info-sub" class="unit-info-sub"></div>
+        </div>
+      </div>
+      <div id="unit-info-stats" class="unit-info-stats"></div>
+      <!--
+        ★ 0.1.1：这一块的标题是**动态**的 ——
+        布阵阶段显示「羁绊」（这个干员吃到了哪些羁绊、还差几个），
+        战斗中换成「当前效果」（护盾 / 眩晕 / 隐匿 / 无敌 / 流血…）。
+        两件事用的是同一个数据源的不同侧面，共用一块 DOM 就够了。
+      -->
+      <div class="unit-info-section" id="unit-info-traits-title">羁绊</div>
+      <div id="unit-info-traits" class="unit-info-traits"></div>
+      <div class="unit-info-section">技能</div>
+      <!--
+        技能条：战斗时显示"技能攒到多少了 / 刚放完在冷却"。
+        法力满了就放技能、放完清零 —— 所以这条法力条就是技能 CD 条。
+      -->
+      <div id="unit-info-manabar" class="unit-info-manabar hidden">
+        <div class="manabar-track">
+          <div id="unit-info-manafill" class="manabar-fill"></div>
+          <span id="unit-info-manatext" class="manabar-text">0 / 1000</span>
+        </div>
+        <div id="unit-info-manastate" class="manabar-state">技能回复中</div>
+      </div>
+      <div id="unit-info-skill" class="unit-info-skill"></div>
+      <!--
+        藏品（装备）★ 0.0.3
+        ============================================================
+        显示这个干员身上挂的**穿戴藏品**（最多 2 件），每件后面一个「卸下」。
+        （数据层里这一类叫 A 类，那只是代号，界面上不出现。）
+        【为什么卸下按钮会禁用？】
+        穿戴藏品栏一共 10 格，卸下来的东西必须**放得回去**。
+        栏满的时候点卸下 = 藏品凭空消失，所以按钮禁用，
+        并在下面写一行原因（见 renderUnitInfoItems 的 hint）。
+        这条是需求里明确点名的："仅在 A 类藏品格有位置时可以卸下"。
+      -->
+      <div id="unit-info-items-block" class="hidden">
+        <div class="unit-info-section">
+          藏品 <span id="unit-info-items-hint" class="panel-title-hint"></span>
+        </div>
+        <div id="unit-info-items" class="unit-info-items"></div>
+      </div>
+      <div class="unit-info-actions">
+        <button id="unit-info-recall" class="ghost-btn">收回备战席</button>
+      </div>
+    </div>
+
+    <!-- ============================================================
+         ★ 0.1.2 测试模式：干员基础属性修改面板
+         ============================================================
+         只有「修改器 -> 数值修改」开着时才会出现，位置和 #unit-info 一样
+         跟着点击的棋子走（见 main.ts 的 positionUnitEditor）。
+
+         字段行不写在这里，由 main.ts 按 UNIT_STAT_FIELDS 生成 ——
+         加一个可改的数值就只改那一个表，HTML 一行都不用动。
+         ============================================================ -->
+    <div id="unit-edit" class="unit-edit hidden">
+      <button id="unit-edit-close" class="ghost-btn unit-edit-close" title="关闭">✕</button>
+      <div class="unit-edit-head">
+        <div id="unit-edit-title" class="unit-edit-title">干员</div>
+        <div id="unit-edit-sub" class="unit-edit-sub"></div>
+      </div>
+      <div class="unit-edit-note">
+        改的是**基础属性**（白板值）—— 羁绊 / 藏品的加成会照旧叠在上面。
+        只影响这一张卡，只在本局生效。
+      </div>
+      <div id="unit-edit-rows" class="unit-edit-rows"></div>
+      <div id="unit-edit-error" class="unit-edit-error"></div>
+      <div class="unit-edit-actions">
+        <button id="unit-edit-reset" class="ghost-btn" title="把这张卡恢复成数据表里的原值">恢复白板</button>
+        <button id="unit-edit-cancel" class="ghost-btn">取消</button>
+        <button id="unit-edit-save" class="primary-btn">保存</button>
+      </div>
+    </div>
+
+    <div id="toast" class="toast hidden"></div>
+    <!-- ============================================================
+         背景音乐（0.0.2）
+
+         【为什么"音符按钮"和"控制面板"是两个并列的元素？】
+         按钮有时候要待在顶栏里（对局中，紧挨着「← 返回大厅」），
+         有时候要浮在左上角（大厅 / 房间界面，那里没有顶栏）。
+         如果面板是按钮的子元素，它就会被顶栏那个 z-index 20 的
+         层叠上下文关在里面，被战斗控制条之类的东西压住。
+         拆成两个之后：按钮负责"我在哪"，面板负责"我长什么样" ——
+         面板永远挂在 body 上、z-index 200，谁也别想压它。
+
+         【音频元素为什么也在这里？】
+         它是整个播放器的载体，必须在视图切换（setView 隐藏 #game-hud）
+         之外 —— 否则一进对局/一出对局音乐就断了。
+         ============================================================ -->
+    <audio id="music-audio" preload="metadata"></audio>
+
+    <div id="music-dock" class="music-dock floating hidden">
+      <button
+        id="music-toggle"
+        class="music-pill"
+        title="背景音乐（点这里展开 / 收起控制台）"
+        aria-expanded="false"
+      >
+        <span id="music-icon" class="music-icon">♪</span>
+        <span id="music-now" class="music-now">音乐</span>
+      </button>
+    </div>
+
+    <!--
+      ★★ 0.3.3 音乐控制台重排（用户口径：风格靠拢）
+      以前是一列"图标按钮 + 一行下拉 + 两个按钮"，没有分区、没有进度条，
+      看起来像浏览器自带的媒体条，和 0.3 那套"小号大写标签 + 细线"的语言不搭。
+
+      现在按对局界面的写法分区：
+        标题条 → 「正在播放」曲名 → 进度（可拖）→ 走带 + 播放模式
+        → 「曲目」下拉 → 「音量」滑杆
+      每个分区上面一行 10px 的大字距小标签，和 .stat-label / .panel-title 同一套规矩。
+      ★ 新增的只有 #music-seek（拖动跳转）和 #music-state（播放/暂停/直播状态字）。
+    -->
+    <div id="music-panel" class="music-panel hidden">
+      <div class="music-head">
+        <span class="music-head-title">背景音乐</span>
+        <button id="music-close" class="music-icon-btn" title="收起控制台">✕</button>
+      </div>
+
+      <div class="music-block">
+        <span class="music-block-label">正在播放</span>
+        <div id="music-current" class="music-current">还没有选曲</div>
+      </div>
+
+      <div class="music-block">
+        <input
+          id="music-seek"
+          class="music-seek"
+          type="range"
+          min="0"
+          max="1000"
+          step="1"
+          value="0"
+          title="拖动跳转"
+        />
+        <div class="music-progress-meta">
+          <span id="music-time" class="music-time mono">0:00 / 0:00</span>
+          <span id="music-state" class="music-state">未播放</span>
+        </div>
+      </div>
+
+      <div class="music-row music-transport">
+        <button id="music-prev" class="music-icon-btn" title="上一首">⏮</button>
+        <button id="music-play" class="music-icon-btn music-play-btn" title="播放 / 暂停（快捷键 M，大厅和对局里都能用）">
+          ▶
+        </button>
+        <button id="music-next" class="music-icon-btn" title="下一首">⏭</button>
+        <span class="music-transport-hint">上一首 / 播放 / 下一首</span>
+      </div>
+
+      <div class="music-row music-modes">
+        <button id="music-shuffle" class="music-mode-btn" title="随机播放">随机</button>
+        <button id="music-repeat" class="music-mode-btn" title="循环模式：不循环 / 列表循环 / 单曲循环">
+          列表循环
+        </button>
+      </div>
+
+      <div class="music-block">
+        <span class="music-block-label">曲目</span>
+        <!-- 下拉选曲：按专辑 optgroup 分组（47 张专辑 / 62 首） -->
+        <select id="music-select" class="music-select" title="选择曲目"></select>
+      </div>
+
+      <div class="music-block">
+        <span class="music-block-label">音量</span>
+        <div class="music-volume-row">
+          <button id="music-mute" class="music-icon-btn" title="静音 / 取消静音">🔊</button>
+          <input
+            id="music-volume"
+            class="music-volume"
+            type="range"
+            min="0"
+            max="100"
+            step="1"
+            value="5"
+            title="音量"
+          />
+        </div>
+      </div>
+
+      <div id="music-hint" class="music-hint hidden">
+        浏览器拦下了自动播放 —— 点一下页面任意位置即可开始
+      </div>
+      <div id="music-empty" class="music-hint hidden">
+        这次构建没有带音乐（把曲目放到 apps/web/public/music/ 后重跑 music:import）
+      </div>
+    </div>
+
+    <!-- ============================================================
+         修改器（★ 0.0.3）—— 只有测试模式才出现
+         ============================================================
+         和音乐面板同一套做法：按钮在顶栏（视角徽标左边），面板挂在 body 上
+         且 z-index 比顶栏高，位置由 main.ts 按按钮的矩形算
+         （见 positionModifierPanel）—— 这样它不会被顶栏那个层叠上下文压住。
+         ============================================================ -->
+    <div id="modifier-panel" class="modifier-panel hidden">
+      <div class="modifier-head">
+        <span class="modifier-head-title">修改器</span>
+        <button id="modifier-close" class="music-icon-btn" title="收起">✕</button>
+      </div>
+
+      <label class="modifier-row" for="modifier-infinite-gold">
+        <span class="modifier-label">无限金币</span>
+        <input id="modifier-infinite-gold" type="checkbox" class="modifier-switch" />
+      </label>
+
+      <div class="modifier-row">
+        <span class="modifier-label">金币加 50</span>
+        <button id="modifier-add-gold" class="ghost-btn modifier-mini">+50</button>
+      </div>
+
+      <label class="modifier-row" for="modifier-ignore-pop">
+        <span class="modifier-label">无视人口上限</span>
+        <input id="modifier-ignore-pop" type="checkbox" class="modifier-switch" />
+      </label>
+
+      <!-- ★ 0.0.3：直接改等级（人口上限 / 商店概率跟着变） -->
+      <div class="modifier-row">
+        <span class="modifier-label">等级</span>
+        <select
+          id="modifier-level"
+          class="modifier-select modifier-level"
+          title="直接把等级设成 1~10 级（人口上限、商店各费用出现概率都会跟着变）"
+        >
+          <option value="1">1 级</option>
+          <option value="2">2 级</option>
+          <option value="3">3 级</option>
+          <option value="4">4 级</option>
+          <option value="5">5 级</option>
+          <option value="6">6 级</option>
+          <option value="7">7 级</option>
+          <option value="8">8 级</option>
+          <option value="9">9 级</option>
+          <option value="10">10 级</option>
+        </select>
+      </div>
+
+      <div class="modifier-sep"></div>
+
+      <!--
+        ★ 0.1.2：数值修改（逐张卡改基础属性）
+        ============================================================
+        打开之后，布阵阶段点场上的干员**不再弹详情页**，改弹「属性修改」面板。
+        保存只影响**这一张卡**（不是这一种干员），并且只在本局生效。
+        理由见 main.ts 的 openUnitEditor。
+      -->
+      <label class="modifier-row" for="modifier-stat-edit">
+        <span class="modifier-label">数值修改</span>
+        <input id="modifier-stat-edit" type="checkbox" class="modifier-switch" />
+      </label>
+      <div class="modifier-note">
+        打开后：布阵阶段点场上干员 → 弹属性面板。改的是**基础属性**，
+        只影响**这一张卡**，只在本局生效。
+      </div>
+
+      <div class="modifier-sep"></div>
+
+      <div class="modifier-sub">获得干员</div>
+      <div class="modifier-grant">
+        <select id="modifier-unit" class="modifier-select" title="全部干员 + 所有野怪（不含召唤物）"></select>
+        <select id="modifier-star" class="modifier-select modifier-star" title="星级">
+          <option value="1">1 星</option>
+          <option value="2">2 星</option>
+          <option value="3">3 星</option>
+        </select>
+      </div>
+      <button id="modifier-grant" class="ghost-btn wide">获得干员</button>
+      <div class="modifier-note">
+        修改器给的角色直接进备战席，不占牌库、卖掉也不还牌库。野怪没有星级，选 1~3 星都一样。
+      </div>
+
+      <div class="modifier-sep"></div>
+
+      <!--
+        ★ 0.0.3：获得藏品 —— 逻辑和「获得干员」一样（发出去的东西不占牌库）。
+        藏品直接进藏品栏：穿戴藏品要自己拖到干员身上，共享藏品要拖到共享装备位才生效。
+      -->
+      <div class="modifier-sub">获得藏品</div>
+      <div class="modifier-grant">
+        <select id="modifier-item" class="modifier-select" title="普通藏品 + 进阶藏品"></select>
+      </div>
+      <button id="modifier-grant-item" class="ghost-btn wide">获得藏品</button>
+      <div class="modifier-note">
+        藏品直接进藏品栏（穿戴藏品拖到干员身上、共享藏品拖到共享装备位才生效），不占牌库。栏位满了会提示。
+      </div>
+    </div>
+
+    <!-- ============================================================
+         返回主界面的二次确认
+         ============================================================
+         返回会丢掉当前这一局（联机时还会退出房间），
+         所以加一道确认，避免误触。
+         ============================================================ -->
+    <div id="confirm-overlay" class="menu-overlay hidden">
+      <div class="detail-card confirm-card">
+        <div id="confirm-title" class="confirm-title">返回主界面？</div>
+        <div id="confirm-message" class="confirm-message"></div>
+        <div class="overlay-buttons">
+          <button id="confirm-cancel" class="ghost-btn">取消</button>
+          <button id="confirm-ok" class="primary-btn danger">确定返回</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================
+         ★ 0.1.1：备战席棋子的悬停卡片
+         ============================================================
+         鼠标移到备战席的干员上就弹出来，**只显示五样**：
+         名字 · 星级 · 羁绊 · 技能 · 射程。
+
+         【为什么不用浏览器自带的 title？】
+         title 是一行灰字、排版完全不可控（换行靠 \n，字号颜色都改不了），
+         而且显示/消失的时机由浏览器决定（跟鼠标悬停的时长有关）。
+         自己做一个：位置可控、样式跟着游戏走、内容能分区块。
+
+         挂在 body 上（不是备战席格子的子元素）——
+         格子上有 overflow 裁剪，卡片放进去会被切掉一半。
+         ============================================================ -->
+    <div id="bench-tip" class="bench-tip hidden"></div>
+
+          <!--
+        ★ 0.3.4「图鉴 + 组队器」大弹窗 —— **挂在 body 上，不在 #main-menu 里面**。
+
+        【为什么必须搬出来？】
+        它原来写在 `#main-menu` 内部。`.menu-overlay` 是 `display:none` 的对局状态：
+        一进对局 `#main-menu` 就整个不显示了，图鉴跟着一起消失 ——
+        表现就是"点了图鉴按钮什么都没发生"（实测 `#codex-overlay` 的
+        `getBoundingClientRect()` 是 **0×0**）。
+        而且 `.menu-overlay` 有 `backdrop-filter`，它会给 `position:fixed` 的后代
+        另建一个包含块，图鉴的 `inset:0` 就不再是"整个视口"了。
+
+        【层级口径】z-index 300，和结算页同层、DOM 排在它**前面**
+        ⇒ 图鉴盖得住大厅/盟约/设置（100），但盖不住"必须处理"的那几层：
+        商店回合 360 / fever 380 / 暂停 390 / 重连 400 / 结算页（同 300、DOM 更后）。
+      -->
+      <div id="codex-overlay" class="codex-overlay hidden">
+        <div class="codex-card">
+          <div class="codex-head">
+            <div class="codex-heading">
+              <div id="codex-title" class="codex-title">图鉴</div>
+              <div id="codex-sub" class="codex-sub">棋子按费用分档 · 藏品按用途分档</div>
+            </div>
+            <div class="codex-tools">
+              <span id="codex-count" class="codex-count">—</span>
+              <button id="codex-close" class="codex-close-btn" type="button" title="关闭（Esc）">✕</button>
+            </div>
+          </div>
+          <div class="codex-body">
+            <div id="codex-rail" class="codex-rail"></div>
+            <div id="codex-main" class="codex-main"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================================
+           ★ 0.3.4 新手教程（第一次打开时自动弹一次，之后从右上角那颗「?」再打开）
+
+           【为什么挂在 body 上而不是 #main-menu 里】
+           和 0.3.4 图鉴那次踩的坑同一个：写进 `#main-menu` 的话，
+           一进对局菜单就 `display:none`，教程跟着一起消失（量出来是 0×0）。
+
+           【为什么做成"翻页"而不是一屏长文】
+           新手第一次打开时**不会读长文** —— 一屏一屏地给，每页只说一件事，
+           下一页按钮就是天然的"读完了"。
+           ============================================================ -->
+      <div id="tutorial-overlay" class="menu-overlay tutorial-overlay hidden">
+        <div class="tutorial-card">
+          <header class="tutorial-head">
+            <div class="tutorial-heading">
+              <div id="tutorial-title" class="tutorial-title">新手教程</div>
+              <div id="tutorial-sub" class="tutorial-sub">一分钟看懂这局怎么玩</div>
+            </div>
+            <div class="tutorial-tools">
+              <span id="tutorial-step" class="tutorial-step">1 / 6</span>
+              <button id="tutorial-close" class="tutorial-close-btn" type="button" title="关闭（Esc）">✕</button>
+            </div>
+          </header>
+          <div id="tutorial-body" class="tutorial-body"></div>
+          <footer class="tutorial-foot">
+            <div id="tutorial-dots" class="tutorial-dots"></div>
+            <div class="tutorial-buttons">
+              <button id="tutorial-prev" class="ghost-btn" type="button">上一页</button>
+              <button id="tutorial-next" class="primary-btn" type="button">下一页</button>
+            </div>
+          </footer>
+        </div>
+      </div>
+
+<!-- ============================================================
+         ★ 0.1.1：联机对局结算页
+         ============================================================
+         四个模块（结构和数据来源见 main.ts 的 renderResultPage）：
+           ① 顶部摘要 —— 回合数 + 冠军 + 本局最高伤害（全局）
+           ② 玩家排名列表 —— 每名玩家一张卡：名次 + 头像/名字/等级/血量/胜负/淘汰回合
+           ③ 每张卡里的「死亡时的阵容」（服务器已按费用从低到高排好）
+           ④ 每张卡里的「激活羁绊」+「本玩家最高伤害干员」
+         ============================================================ -->
+    <div id="result-page" class="result-page hidden">
+      <div class="result-shell">
+        <header class="result-head">
+          <div class="result-head-main">
+            <div id="result-title" class="result-title">游戏结束</div>
+            <div id="result-sub" class="result-sub"></div>
+          </div>
+          <div class="result-head-mvp">
+            <span class="result-mvp-label">本局伤害最高的干员</span>
+            <span id="result-mvp" class="result-mvp-value">—</span>
+          </div>
+        </header>
+        <div id="result-list" class="result-list"></div>
+        <footer class="result-foot">
+          <span class="result-hint">这份战绩是服务器算好下发的，房间里每个人看到的都一样。</span>
+          <!--
+            ★ 0.3.5：「再来一局」—— 把房间退回大厅（房间号、座位都不变）。
+            服务端复位血量 / 战绩 / 准备状态 / 牌库，所有人一起回大厅等房主再开。
+            右二是「收起」，留着让玩家还能看一眼自己的棋盘。
+          -->
+          <button id="result-again" class="primary-btn">再来一局 · 返回房间</button>
+          <button id="result-close" class="ghost-btn">收起（继续看棋盘）</button>
+        </footer>
+      </div>
+    </div>
+
+    <!-- ============================================================
+         ★ 0.1.1：房主改别人昵称的小弹窗
+         ============================================================
+         为什么不用浏览器自带的 prompt()？
+           · 样式完全不可控（和游戏风格差得远），
+           · 有些内嵌浏览器/无头环境会直接把它禁掉，
+           · 而且它**阻塞**整个页面 —— 联机里这一秒可能正好在推房间状态。
+         自己做一个：样式统一、可测试、Enter 直接提交。
+         ============================================================ -->
+    <div id="rename-overlay" class="menu-overlay hidden">
+      <div class="detail-card confirm-card">
+        <div class="confirm-title">修改昵称</div>
+        <div id="rename-whose" class="confirm-message"></div>
+        <input id="rename-input" class="rename-input" maxlength="8" placeholder="输入新昵称（2-8 个字）" />
+        <div id="rename-error" class="rename-error"></div>
+        <div class="overlay-buttons">
+          <button id="rename-cancel" class="ghost-btn">取消</button>
+          <button id="rename-ok" class="primary-btn">确定</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================
+         ★ 0.1.3：房主请人出房间 —— 可以附一句话，原样转达给被踢的人
+         ============================================================ -->
+    <div id="kick-overlay" class="menu-overlay hidden">
+      <div class="detail-card confirm-card">
+        <div class="confirm-title">请出房间</div>
+        <div id="kick-whose" class="confirm-message"></div>
+        <input id="kick-input" class="rename-input" maxlength="60" placeholder="给他留句话（可以不写）" />
+        <div id="kick-error" class="rename-error"></div>
+        <div class="overlay-buttons">
+          <button id="kick-cancel" class="ghost-btn">取消</button>
+          <button id="kick-ok" class="primary-btn">请出房间</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================
+         ★ 0.1.3：被请出房间时，把房主的留言显示给本人
+         ============================================================ -->
+    <div id="kicked-overlay" class="menu-overlay hidden">
+      <div class="detail-card confirm-card">
+        <div class="confirm-title">你被请出了房间</div>
+        <div id="kicked-message" class="confirm-message"></div>
+        <div class="overlay-buttons">
+          <button id="kicked-ok" class="primary-btn">知道了</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================
+         ★ 0.1.4：重连失败的**明确交代**
+         ============================================================
+         以前失败只弹一条 2 秒就消失的 toast，然后把重连会话悄悄清掉 ——
+         玩家看到的是"没弹接管 + 点重连按钮也没反应"，而且永远查不出为什么：
+           · 会话被清 ⇒ 「回到对局」按钮自我隐藏，
+             加入房间页的「断线重连恢复」也只会说"没有记录"；
+           · 那条 toast 夹在页面刚加载的一堆日志里，2 秒后就没影了。
+         所以这里必须是一个**要玩家自己点掉**的浮层，
+         一次说清三件事：哪一局、为什么回不去、下一步怎么办。
+         ============================================================ -->
+    <div id="resume-failed-overlay" class="menu-overlay hidden">
+      <div class="detail-card confirm-card">
+        <div class="confirm-title">回不到原来那一局了</div>
+        <div id="resume-failed-message" class="confirm-message"></div>
+        <div id="resume-failed-hint" class="confirm-message resume-failed-hint"></div>
+        <div class="overlay-buttons">
+          <button id="resume-failed-ok" class="primary-btn">知道了</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================
+         ★ 0.1.2：断线重连中的浮层
+         ============================================================
+         连接断了、但服务端还给我留着座位（宽限期内）时盖在画面上，
+         告诉玩家"还在等他回来"，并给一个手动重试按钮。
+
+         为什么不做成"自动重连成功就悄悄消失"就完事？
+         因为自动重连本身会重试若干次，遇上服务器重启/网络切换可能拖很久，
+         玩家盯着一个冻结的画面会以为游戏卡死了 —— 给他一个明确的说法 + 一个按钮。
+         ============================================================ -->
+    <div id="resync-overlay" class="menu-overlay hidden">
+      <div class="detail-card confirm-card">
+        <div class="confirm-title">正在重连…</div>
+        <div id="resync-message" class="confirm-message">和房间的连接断开了，正在尝试重新连上（你的座位还留着）。</div>
+        <div class="overlay-buttons">
+          <button id="resync-retry" class="primary-btn">立即重试</button>
+          <button id="resync-leave" class="ghost-btn">放弃并退出房间</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="machine-busy-overlay" class="menu-overlay hidden">
+      <div class="detail-card confirm-card">
+        <div class="confirm-title">本机正在对局中</div>
+        <div id="machine-busy-message" class="confirm-message">
+          这台电脑上的另一个标签页已经在对局里了。一台机器只能算一个玩家。
+        </div>
+        <div class="overlay-buttons">
+          <button id="machine-busy-takeover" class="primary-btn">接管这一局</button>
+          <button id="machine-busy-stay" class="ghost-btn">留在菜单</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================
+         ★ 0.1.4 对局暂停（有人掉线）
+         ============================================================
+         规则（服务端说了算，这里只是把它摆出来）：
+           · 只要有**还活着**的人掉线，全场暂停 3 分钟等他回来；
+           · 暂停期间又有人掉线 -> 倒计时重新开始；
+           · 只有一颗「同意」按钮：在线的人**全部**点过 -> 暂停立刻取消，
+             掉线那位**当场淘汰**（他本人点不了，所以不要求他）；
+           · 3 分钟到点还没回来 -> 同样是淘汰。
+         所以这里**故意没有关闭按钮**：要么等他（时间到/他回来），
+         要么所有人同意直接淘汰他 —— 没有"我自己不等了"这种单方面选项。
+         ============================================================ -->
+    <div id="pause-overlay" class="menu-overlay pause-overlay hidden">
+      <div class="detail-card confirm-card">
+        <div class="confirm-title pause-title">对局已暂停</div>
+        <div id="pause-message" class="confirm-message">
+          有玩家掉线了，对局停住等他回来。
+        </div>
+        <div id="pause-timer" class="pause-timer">3:00</div>
+        <div id="pause-votes" class="pause-votes">同意取消暂停：0 / 0</div>
+        <div class="overlay-buttons">
+          <button id="pause-agree" class="primary-btn">同意</button>
+        </div>
+        <div class="pause-hint">
+          所有人都点「同意」就直接淘汰掉线的人、继续打；不然就等他 3 分钟。
+        </div>
+      </div>
+    </div>
+
+    <!--
+      ★★ 0.3.2 阿米娅升变任务（第一阶段）达成：**二选一**发证。
+      【为什么在布阵阶段弹、且不能主动关？】
+      用户口径：任务一完成时在布阵阶段弹窗，二选一发放藏品。
+      这里是"选一个形态走"的分叉点，关掉就没得选了，所以只给两个按钮。
+    -->
+    <div id="cert-choice-overlay" class="menu-overlay hidden">
+      <div class="detail-card confirm-card cert-choice-card">
+        <div class="confirm-title">阿米娅 · 不容拒绝</div>
+        <div class="confirm-message">
+          她愿意为你改变 —— 选一条路走。证只有一张，另一条线这次就断了。
+        </div>
+        <div class="cert-choice-grid">
+          <button id="cert-choice-blue" class="cert-choice-btn" data-cert="itm_amiya_blue_cert">
+            <span class="cert-choice-icon"><img id="cert-choice-blue-img" alt="" /></span>
+            <span class="cert-choice-name">升变之证 · 青色怒火</span>
+            <span class="cert-choice-desc">近卫形态：射程变短，换来更高的生命与攻击</span>
+          </button>
+          <button id="cert-choice-mercy" class="cert-choice-btn" data-cert="itm_amiya_mercy_cert">
+            <span class="cert-choice-icon"><img id="cert-choice-mercy-img" alt="" /></span>
+            <span class="cert-choice-name">升变之证 · 慈悲愿景</span>
+            <span class="cert-choice-desc">医疗形态：面板偏低，但能站在后排带动全队</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!--
+      ★★ 0.2 MujicaAve：fever 达标时的「保留 / 消耗」次级页面。
+      【为什么不可关闭？】用户口径 2：达标后"出现次级页面且不能主动关闭"，
+      只有两个选项，选完才消失。
+    -->
+    <div id="fever-overlay" class="menu-overlay fever-overlay hidden">
+      <div class="detail-card confirm-card">
+        <div class="confirm-title fever-title">fever 已达标</div>
+        <div id="fever-message" class="confirm-message">
+          是否消耗全部 fever？
+        </div>
+        <div id="fever-total" class="fever-total">0</div>
+        <div class="overlay-buttons">
+          <button id="fever-hold" class="ghost-btn">保留 fever</button>
+          <button id="fever-spend" class="primary-btn">消耗 fever</button>
+        </div>
+        <div class="fever-hint">
+          消耗后：下一场所有 MujicaAve 干员开局立刻开启特殊技能（期间受到致命伤害不会死亡，
+          技能结束后技力回满）；那一场不会再获得 fever，若战败则按档位返还一部分。
+        </div>
+      </div>
+    </div>
+
+    <!--
+      ★★ 0.2 新机制：商店回合（野怪回合之后的 90 秒限时商店）
+      ============================================================
+      布局严格照用户给的参考图：
+        · **左半边** = 坎诺特官方立绘（assets/npc/khanot.png）
+        · **右半边** = 8 个货架（4 普通 / 2 进阶 / 1 干员 / 1 转职）
+        · **上方**   = 「购买 / 售卖」切换
+        · 整体**绿色**（坎诺特主题色）
+      和 fever 浮层的区别：这个**可以自由开关**（右上角 ✕ + 金币上方按钮）。
+    -->
+    <div id="shop-round-overlay" class="menu-overlay shop-round-overlay hidden">
+      <div class="shop-round-card">
+        <!-- 上方：购买 / 售卖 切换 + 倒计时 + 关闭 -->
+        <div class="shop-round-top">
+          <div class="shop-round-tabs">
+            <button id="shop-round-tab-buy" class="shop-round-tab">购买</button>
+            <button id="shop-round-tab-sell" class="shop-round-tab">售卖</button>
+          </div>
+          <div class="shop-round-top-right">
+            <span id="shop-round-timer" class="shop-round-timer mono">90</span>
+            <button id="shop-round-close" class="shop-round-close" title="关闭（金币上方的按钮可以再打开）">
+              ✕
+            </button>
+          </div>
+        </div>
+
+        <div class="shop-round-body">
+          <!-- 左半边：坎诺特立绘 -->
+          <div class="shop-round-left">
+            <img id="shop-round-npc" class="shop-round-npc" src="/assets/npc/khanot.png" alt="坎诺特" />
+            <div class="shop-round-npc-name">古怪商人 · 坎诺特</div>
+            <div id="shop-round-npc-line" class="shop-round-npc-line">
+              「看看货吧，朋友 —— 时间不等人。」
+            </div>
+          </div>
+
+          <!-- 右半边：货架 -->
+          <div class="shop-round-right">
+            <div id="shop-round-slots" class="shop-round-slots"></div>
+            <div class="shop-round-foot">
+              <span id="shop-round-gold" class="shop-round-gold">金币 0</span>
+              <div class="shop-round-foot-btns">
+                <button id="shop-round-reroll" class="shop-round-btn">
+                  刷新 <span id="shop-round-reroll-cost" class="cost">4</span><span id="shop-round-reroll-badge" class="perk-badge hidden"></span>
+                </button>
+                <!--
+                  ★ 用户口径：买完就能走 —— 站着干等剩下的 60 秒纯属浪费。
+                  联机里它只关**我自己**这张商店（服务端那 90 秒是全房间同步的阶段），
+                  关掉之后我直接进布阵，别人的弹窗不受影响。
+                -->
+                <button id="shop-round-end" class="shop-round-btn ghost" title="买完了？直接收摊，剩下的时间拿去布阵">
+                  结束商店
+                </button>
+              </div>
+            </div>
+            <div id="shop-round-hint" class="shop-round-hint">
+              普通藏品 8 金 · 进阶 16 金 · 转职 12 金 · 干员位直接给 2 星
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,2088 @@
+/* ============================================================
+   失序协议 · 0.3 皮肤层（theme-ark）
+   ============================================================
+   【这一层只做一件事：换外观。】
+   位置、尺寸、DOM、交互一律不动 —— 它必须能在 styles.css 之后被加载，
+   靠覆盖把"深蓝紫 + 大圆角 + 柔光"换成"黑灰白 + 荧光黄绿 + 直角/切角"。
+
+   ★ 为什么要单独一层，而不是直接改 styles.css？
+     5612 行里混着布局和外观，直接改很难回头。分层之后：
+       styles.css  = 布局与结构（尽量不动）
+       theme-ark   = 颜色、圆角、字号、字距、描边、发光
+     哪天想再改一次皮，只动这个文件；想回滚就删掉这一行 <link>。
+
+   ★★ 配色口径（用户明确）：
+     重心 = 黑 / 灰 / 白
+     系统高亮 = 荧光黄绿 #C9FA43（选中、激活、进度、可交互强调）
+     红 #FF5252 = 警示 / 敌对
+     黄 #F5C544 = 资源（金币）/ 高品质（5 费）
+     其余一律灰阶。不要再出现"谁都带一点蓝、一点紫、一点金"。
+   ============================================================ */
+
+:root {
+  --bg: #0b0c0e;
+  --panel: rgba(17, 19, 22, 0.92);
+  --panel-solid: #111316;
+  --panel-border: rgba(150, 160, 175, 0.2);
+  --text: #edeff2;
+  --text-dim: #8b9199;
+
+  /* ★ 强调色从"蓝"换成"荧光黄绿"。这一处改完，全站 60% 的颜色就跟着变了 */
+  --accent: #c9fa43;
+  --accent-strong: #d8ff62;
+
+  --gold: #f5c544;
+  --danger: #ff5252;
+  --success: #8fe388;
+
+  /* 圆角几乎全部抹平：方舟那种"直角 + 斜切" */
+  --radius: 2px;
+
+  /* 新增语义色（新样式只用这几个，不再各自写十六进制） */
+  --hl: #c9fa43;
+  --hl-dim: #6e8a26;
+  --res: #f5c544;
+  --warn: #ff5252;
+  --line: #262a30;
+  --line-lit: #3b424b;
+  --mono: 'Cascadia Code', 'Consolas', ui-monospace, monospace;
+}
+
+/* ============================================================
+   一、全局收敛：去掉 0.2 那套"柔光 + 玻璃模糊 + 大圆角"
+   ============================================================ */
+
+/* 底衬：不再是深空蓝紫的径向渐变，改成近黑的平色 + 极淡网格 */
+body {
+  background: var(--bg);
+  font-size: 13px;
+  letter-spacing: 0.01em;
+}
+
+/* 泛用的柔光阴影一律压掉（对话框的浮起感在第九节单独补） */
+#topbar,
+#traits,
+#dock,
+#battle-bar,
+.shop-slot,
+.bench-slot,
+.ghost-btn,
+.primary-btn,
+.menu-btn,
+.menu-panel,
+.net-input,
+.sidebar-tab,
+.trait-row,
+.player-row,
+.log-line,
+.item-slot,
+.chip,
+.pill {
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+}
+
+/* 面板：保留"有块面"的层次，但去掉圆角和玻璃感 */
+#traits,
+#dock,
+#battle-bar,
+.menu-panel,
+.confirm-card,
+.settings-card {
+  border-radius: 2px;
+  background: var(--panel-solid);
+  border: 1px solid var(--line);
+}
+
+/* 数字一律等宽：血量/金币/伤害跳动时不会左右抖 */
+.stat-value,
+.gold-value,
+.xp-text,
+.shop-odds,
+.pool-left,
+.mono,
+#battle-time {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}
+
+/* 小号标签统一：更小的字号 + 更大的字距，这是"方舟味"里最便宜的一条 */
+.stat-label,
+.panel-title,
+.shop-title,
+.bench-header,
+.dock-hint,
+.bench-hint,
+.shop-odds {
+  letter-spacing: 0.18em;
+}
+
+/* ============================================================
+   二、顶栏
+   ============================================================ */
+#topbar {
+  background: linear-gradient(180deg, #101215, #0b0c0e);
+  border-bottom: 1px solid var(--line);
+  /* 顶栏下沿一条强调色短线，只走品牌那一段 —— 这种"不对称的线"最像方舟 */
+  position: fixed;
+}
+#topbar::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: -1px;
+  width: 180px;
+  height: 1px;
+  background: linear-gradient(90deg, var(--hl), transparent);
+}
+
+.brand {
+  color: var(--text);
+  text-shadow: none;
+  letter-spacing: 0.32em;
+  font-weight: 900;
+}
+
+.stat-label {
+  font-size: 9px;
+  color: #5a6068;
+}
+
+.stat-value {
+  font-size: 16px;
+  font-weight: 700;
+}
+/* 生命 = 系统高亮；金币 = 资源黄；敌人/警告色沿用 --danger */
+.stat-value.hp {
+  color: var(--hl);
+}
+.stat-value.gold {
+  color: var(--res);
+}
+
+/* ============================================================
+   三、左栏：羁绊
+   ============================================================ */
+#traits {
+  background: #0e1013;
+}
+
+.panel-title {
+  color: var(--text);
+  font-weight: 800;
+  letter-spacing: 0.22em;
+}
+.panel-title-hint {
+  color: #5a6068;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+}
+
+/* 羁绊行：激活的用左侧荧光竖条 + 极淡底，未激活纯灰 */
+.trait-row {
+  border-left: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+}
+.trait-row.active,
+.trait-row.on {
+  border-left-color: var(--hl);
+  background: linear-gradient(90deg, rgba(201, 250, 67, 0.08), transparent 72%);
+}
+
+/* 羁绊进度条：分段刻度（横向状态线） */
+.trait-bar,
+.trait-progress {
+  border-radius: 0;
+}
+
+/* ============================================================
+   四、右栏：日志 / 玩家 / 藏品
+   ============================================================ */
+.sidebar-tab {
+  color: #5a6068;
+  letter-spacing: 0.18em;
+  border-radius: 0;
+  background: transparent;
+}
+.sidebar-tab.active {
+  color: var(--hl);
+  background: #121417;
+}
+.sidebar-tab.active::after {
+  content: '';
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 0;
+  height: 2px;
+  background: var(--hl);
+}
+
+#sidebar,
+#log,
+#players,
+#collection {
+  background: #0e1013;
+  border-color: var(--line);
+}
+
+.log-line {
+  border-bottom: 1px solid rgba(38, 42, 48, 0.8);
+}
+
+/* ============================================================
+   五、底栏：金币 / 等级 / 商店 / 备战席
+   ============================================================ */
+#dock {
+  background: linear-gradient(180deg, #0e1013, #090a0c);
+  border-top: 1px solid var(--line);
+}
+
+.gold-value {
+  color: var(--res);
+  font-weight: 900;
+  letter-spacing: 0.02em;
+}
+
+/* 金币行加一条底部的"资源色条"，让"这里是钱"一眼可辨 */
+.gold-row {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 6px;
+}
+
+.level-badge {
+  border-radius: 0;
+  border: 1px solid var(--line-lit);
+  background: transparent;
+  color: var(--text-dim);
+  letter-spacing: 0.14em;
+}
+
+.xp-track {
+  border-radius: 0;
+  background: #22262c;
+}
+.xp-fill {
+  border-radius: 0;
+  background: var(--hl);
+}
+
+/* ============================================================
+   六、商店卡（★ 用户指定：保留 V2 那种"左图右信息"的卡面）
+   ------------------------------------------------------------
+   DOM 不动，只用 CSS 把卡片压成直角、深底、细线，
+   并让**费用色**变成最显眼的一条：左侧竖色条 + 实心费用角标。
+   ============================================================ */
+.shop-slot {
+  border-radius: 0;
+  background: #12141a;
+  /* 费用色由 JS 写在 borderColor 上 —— 这里把 1px 描边调暗，
+     让"费用"由左侧色条去表达，整卡不再被稀有度染色（画面更干净） */
+  border-width: 1px;
+  background-clip: padding-box;
+}
+
+.shop-slot .shop-cost-badge {
+  border-radius: 0;
+  font-weight: 900;
+  color: #0b0c0e;
+  letter-spacing: 0;
+}
+
+.shop-slot .shop-portrait-box {
+  border-radius: 0;
+  border-right: 1px solid var(--line);
+}
+
+.shop-slot .shop-slot-name {
+  letter-spacing: 0.06em;
+  font-weight: 600;
+}
+
+/* 羁绊一行小字：灰、字距大 */
+.shop-slot .shop-slot-traits {
+  color: #5a6068;
+  letter-spacing: 0.1em;
+}
+
+/* ★ 卡面底部那条"稀有度色条"改成**左侧竖条**：扫一眼就知道几费 */
+.shop-slot .shop-slot-rarity {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  height: auto;
+  border-radius: 0;
+}
+
+/* 牌库剩余张数：右下角的小数字，压成灰 */
+.shop-slot .pool-left {
+  color: #5a6068;
+}
+
+.shop-slot .shop-owned-badge,
+.shop-slot .upgrade-badge,
+.shop-slot .upgrade-hint {
+  border-radius: 0;
+}
+
+/* ============================================================
+   七、备战席（★ 用户点名：费用色要更明显）
+   ============================================================ */
+.bench-slot {
+  border-radius: 0;
+  background: #111316;
+  border: 1px solid var(--line);
+  /* 费用色走 outline（JS 已经写了 outlineColor），这里只把它加粗加强 */
+  outline-width: 2px;
+  outline-style: solid;
+  outline-offset: -2px;
+}
+
+.bench-slot.empty {
+  background: #0c0e11;
+  outline-color: transparent;
+}
+
+.bench-slot.selected {
+  outline-color: var(--hl);
+  border-color: var(--hl);
+}
+
+.bench-slot .bench-rarity-dot {
+  border-radius: 0;
+  /* 方形小色块，比圆点更"工业" */
+  transform: rotate(45deg);
+}
+
+.bench-slot .bench-star-strip {
+  border-radius: 0;
+}
+
+.bench-portrait-box {
+  border-radius: 0;
+}
+
+/* ============================================================
+   八、按钮
+   ============================================================ */
+.ghost-btn {
+  border-radius: 0;
+  background: #16191d;
+  border: 1px solid var(--line-lit);
+  color: var(--text);
+  letter-spacing: 0.16em;
+  /* 右下切一刀 */
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%);
+}
+.ghost-btn:hover {
+  border-color: var(--hl);
+  color: var(--hl);
+  background: #1a1e23;
+}
+
+.primary-btn {
+  border-radius: 0;
+  background: var(--hl);
+  border: 1px solid var(--hl);
+  color: #0b0c0e;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%);
+}
+.primary-btn:hover {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+  color: #0b0c0e;
+}
+
+.ghost-btn.active {
+  background: var(--hl);
+  color: #0b0c0e;
+  border-color: var(--hl);
+}
+
+/* 输入框 */
+.net-input,
+.rename-input {
+  border-radius: 0;
+  background: #0e1013;
+  border: 1px solid var(--line-lit);
+  color: var(--text);
+}
+.net-input:focus,
+.rename-input:focus {
+  border-color: var(--hl);
+  outline: none;
+}
+
+/* ============================================================
+   九、主菜单 / 大厅 / 弹层
+   ============================================================ */
+.menu-overlay {
+  background:
+    radial-gradient(120% 90% at 50% 18%, rgba(22, 26, 30, 0.94), rgba(6, 7, 9, 0.98));
+  backdrop-filter: none;
+}
+
+.menu-title {
+  color: var(--text);
+  background: none;
+  -webkit-background-clip: initial;
+  background-clip: initial;
+  filter: none;
+  text-shadow: none;
+  font-weight: 900;
+  letter-spacing: 0.3em;
+}
+
+.menu-subtitle {
+  color: #5a6068;
+  letter-spacing: 0.34em;
+}
+
+.menu-btn {
+  border-radius: 0;
+  background: #14171b;
+  border: 1px solid var(--line-lit);
+  letter-spacing: 0.2em;
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%);
+}
+.menu-btn:hover {
+  border-color: var(--hl);
+  color: var(--hl);
+  background: #181c21;
+}
+
+.menu-panel {
+  background: #111316;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+}
+.menu-panel-title {
+  color: var(--hl);
+  letter-spacing: 0.22em;
+}
+
+/* 大厅房间号：等宽大字 */
+.lobby-code-big {
+  color: var(--text);
+  letter-spacing: 0.34em;
+}
+
+/* 对话框：这里是唯一需要"浮起来"的地方，补一层深阴影 */
+.confirm-card,
+.settings-card {
+  border-radius: 2px;
+  background: #101215;
+  border: 1px solid var(--line-lit);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.75) !important;
+}
+.confirm-title {
+  letter-spacing: 0.2em;
+}
+
+/* 设置面板的数值行 */
+.settings-row {
+  border-radius: 0;
+  background: #12151a;
+  border: 1px solid var(--line);
+}
+.settings-row input[type='number'] {
+  border-radius: 0;
+}
+
+/* toast / 提示 */
+.toast {
+  border-radius: 0;
+  background: #16191d;
+  border: 1px solid var(--line-lit);
+}
+
+/* ============================================================
+   十、切角与装饰：给几个"主角块"补上斜切
+   ------------------------------------------------------------
+   只切这几个，不要到处切 —— 全切会变成锯齿大杂烩。
+   ============================================================ */
+.menu-btn,
+.ghost-btn,
+.primary-btn,
+.shop-slot,
+.bench-slot {
+  /* 统一用同一个切角尺寸，看起来才像一套东西 */
+  --cut: 8px;
+}
+.shop-slot {
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%);
+}
+
+/* 滚动条：跟着新配色 */
+#traits::-webkit-scrollbar,
+.menu-overlay::-webkit-scrollbar,
+.settings-card::-webkit-scrollbar {
+  width: 6px;
+}
+#traits::-webkit-scrollbar-thumb,
+.menu-overlay::-webkit-scrollbar-thumb,
+.settings-card::-webkit-scrollbar-thumb {
+  background: #2c3138;
+  border-radius: 0;
+}
+
+/* ============================================================
+   十一、补丁：截第一版真机图之后发现的问题
+   ============================================================ */
+
+/* 1) 主菜单的「单人游戏」是 .menu-btn.primary-btn —— 两条规则都是单类，
+      后面定义的 .menu-btn 会把主按钮的荧光底盖掉。
+      这里用"两个类"提高优先级，把主按钮抢回来。 */
+.menu-btn.primary-btn {
+  background: var(--hl);
+  border-color: var(--hl);
+  color: #0b0c0e;
+  font-weight: 800;
+}
+.menu-btn.primary-btn:hover {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+  color: #0b0c0e;
+}
+
+/* 2) 主标题下面补一条荧光短色条 —— 方舟那种"标题 + 一截线"的排版 */
+#main-menu .menu-title::after {
+  content: '';
+  display: block;
+  width: 46px;
+  height: 2px;
+  margin: 16px auto 0;
+  background: var(--hl);
+}
+
+/* 3) 头像选择面板还是 16px 圆角 + 蓝底，一起抹平
+      ★ 0.3.3：面板换了结构 —— 外层 #avatar-picker 现在是**全屏遮罩**，
+      背景/描边要落在内层的 .avatar-card 上，否则遮罩会被涂成一块不透明的墨。
+      遮罩自己只留一层半透明的黑（点它关闭，得看得出下面还有主菜单）。 */
+.avatar-picker {
+  background: rgba(4, 5, 7, 0.74);
+}
+.avatar-card {
+  border-radius: 2px;
+  background: #0f1114;
+  border: 1px solid var(--line);
+}
+.avatar-cell,
+.avatar-picker .avatar-item {
+  border-radius: 0;
+}
+
+/* 4) 右侧「日志 / 玩家 / 藏品」：底色和边框还是蓝的，且激活态被基础样式压住 */
+.sidebar-tabs {
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: #0f1114;
+  overflow: hidden;
+}
+.sidebar-tabs .sidebar-tab {
+  border-left: 1px solid var(--line);
+  font-weight: 400;
+  letter-spacing: 0.18em;
+  color: #5a6068;
+  background: transparent;
+}
+.sidebar-tabs .sidebar-tab:first-child {
+  border-left: 0;
+}
+.sidebar-tabs .sidebar-tab:hover:not(:disabled) {
+  background: #171a1f;
+  color: var(--text);
+}
+.sidebar-tabs .sidebar-tab.active {
+  color: var(--hl);
+  background: #14171b;
+  box-shadow: inset 0 -2px 0 var(--hl);
+}
+
+/* 5) 备战席空格子：原来只有一圈透明 outline，九宫格糊成一块黑。
+      空位给虚线细框，有棋子的才由 JS 写的 outline 颜色来说"几费"。 */
+.bench-slot.empty {
+  border: 1px dashed #262c33;
+  background: #0b0d10;
+}
+.bench-slot.empty::after {
+  /* 空位中心一个小菱形（点阵/菱形的极简版） */
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  transform: translate(-50%, -50%) rotate(45deg);
+  background: #232a31;
+}
+
+/* 6) 费用角标：加大一档，数字用深色压在稀有度底色上 —— 这是"几费"最直接的读法 */
+.shop-slot .shop-cost-badge {
+  top: 0;
+  left: 0;
+  padding: 3px 9px;
+  font-size: 15px;
+  line-height: 1;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* 7) 牌库剩余：右下角的小数字压暗，不要和费用抢注意力 */
+.shop-slot .pool-left {
+  font-size: 11px;
+  opacity: 0.75;
+}
+
+/* 8) 视角徽标（胶囊）也压成直角 */
+.zoom-hint {
+  border-radius: 0;
+  border: 1px solid var(--line-lit);
+  background: transparent;
+  color: var(--text-dim);
+}
+
+/* 9) 战斗条：蓝底蓝线改中性 */
+#battle-bar {
+  background: rgba(12, 14, 17, 0.94);
+  border: 1px solid var(--line);
+}
+.hp-track {
+  border-radius: 0;
+  background: #22262c;
+}
+.hp-fill {
+  border-radius: 0;
+  background: #e8edf2;
+}
+.hp-fill.enemy {
+  background: var(--warn);
+}
+
+/* ============================================================
+   十二、90 秒商店回合（坎诺特）—— 原来是一整块墨绿，和现在这套黑灰不搭
+   ============================================================ */
+.shop-round-overlay {
+  /* 弹层底衬跟着全站走 */
+  background: radial-gradient(120% 90% at 50% 18%, rgba(22, 26, 30, 0.94), rgba(6, 7, 9, 0.98));
+}
+
+.shop-round-card {
+  border-radius: 2px;
+  /* 去掉绿色渐变，改深石墨；边框只留一根细线 */
+  background: #0f1114;
+  border: 1px solid var(--line-lit);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.75);
+}
+
+.shop-round-top {
+  border-bottom: 1px solid var(--line);
+  background: #101215;
+}
+
+.shop-round-tabs {
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: #0c0e11;
+}
+
+.shop-round-tab {
+  border-radius: 0;
+  color: #5a6068;
+  letter-spacing: 0.16em;
+  background: transparent;
+  border: 0;
+  border-left: 1px solid var(--line);
+}
+.shop-round-tab:first-child {
+  border-left: 0;
+}
+.shop-round-tab.active {
+  background: var(--hl);
+  color: #0b0c0e;
+  font-weight: 800;
+}
+.shop-round-tab:hover:not(.active) {
+  background: #171a1f;
+  color: var(--text);
+}
+
+/* 倒计时：平时是系统高亮，最后 15 秒转警示红（原来一直是绿色） */
+.shop-round-timer {
+  color: var(--hl);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+}
+.shop-round-timer.urgent {
+  color: var(--warn);
+}
+
+.shop-round-close {
+  border-radius: 0;
+  border: 1px solid var(--line-lit);
+  background: transparent;
+  color: var(--text-dim);
+}
+.shop-round-close:hover {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+/* 左侧 NPC 区：压成灰，只留一个荧光竖条当"说话人"标记 */
+.shop-round-left {
+  border-right: 1px solid var(--line);
+  background: #0c0e11;
+  border-left: 2px solid var(--hl);
+}
+.shop-round-npc {
+  border-radius: 0;
+  border: 1px solid var(--line);
+  background: #0a0c0f;
+}
+.shop-round-npc-name {
+  color: var(--text);
+  letter-spacing: 0.2em;
+}
+.shop-round-npc-line {
+  color: var(--text-dim);
+}
+
+/* 商品格：和主商店卡同一套语言（深底 + 细线 + 切角） */
+.shop-round-slot {
+  border-radius: 0;
+  background: #12141a;
+  border: 1px solid var(--line);
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%);
+}
+.shop-round-slot:hover {
+  border-color: var(--hl);
+}
+/* 买不起：压暗 + 描边转红（这是"提醒"，红用得着） */
+.shop-round-slot.unaffordable {
+  border-color: rgba(255, 82, 82, 0.45);
+}
+
+/* ============================================================
+   十三、藏品页：栏位原来的蓝线太淡，在深底上几乎看不见
+   ------------------------------------------------------------
+   用户报的"栏位现在不太明显" —— 把边框提亮到 #3b424b，
+   空格子用虚线 + 稍亮底，占用的格子用实线 + 荧光左条。
+   ============================================================ */
+.item-slot {
+  border-radius: 0;
+  /* ★ 关键：边框从 rgba(120,150,220,.28) 提到接近 line-lit，深底上才看得出来 */
+  border: 1px solid #3b424b;
+  background: #171a20;
+}
+
+.item-slot.empty {
+  border-style: dashed;
+  border-color: #454d57;
+  background: #101216;
+}
+/* 空格子中间给一个小菱形，比"什么都没有"更容易读成"这里能放" */
+.item-slot.empty::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  transform: translate(-50%, -50%) rotate(45deg);
+  background: #2c333b;
+}
+
+.item-slot:hover {
+  filter: none;
+  border-color: var(--hl);
+}
+
+.item-slot.empty:hover {
+  border-color: var(--hl);
+  background: #14181d;
+}
+
+/* 共享装备栏的空位原本写了个「+」，现在底色/描边都换了，颜色也跟着提亮 */
+.item-slots-equip .item-slot.empty {
+  color: #5a6068;
+}
+
+.item-slot.equipped,
+.item-slot.drop-target {
+  border-color: var(--hl);
+}
+
+/* 分栏标题也给一条荧光短条，让"哪一栏"清楚 */
+.item-zone-title,
+.item-slots-title {
+  letter-spacing: 0.18em;
+}
+
+/* ============================================================
+   十四、顶栏「返回大厅」：原来是红底红字 —— 红只该给警示
+   ------------------------------------------------------------
+   改成中性描边（它的语义是"导航"，不是"危险"），
+   只有 hover 时才转红提醒"这一步会离开对局"。
+   ============================================================ */
+.back-btn {
+  border-radius: 0;
+  color: var(--text-dim);
+  border: 1px solid var(--line-lit);
+  background: transparent;
+}
+.back-btn:hover {
+  color: var(--warn);
+  border-color: var(--warn);
+  background: rgba(255, 82, 82, 0.1);
+}
+
+/* ============================================================
+   十五、名字被拒的弹窗：它叠在主菜单之上，两层 .menu-overlay 会叠成"全黑"
+   ------------------------------------------------------------
+   把这一层自己的底衬调淡一点，让后面的菜单还能透出来 ——
+   否则玩家看到的是"整个屏幕黑了"，会以为游戏崩了。
+   ============================================================ */
+#name-alert {
+  background: rgba(6, 7, 9, 0.62);
+}
+#name-alert .confirm-card {
+  /* 弹窗本体保持不透明，和背景拉开层次 */
+  background: #101215;
+}
+
+/* ============================================================
+   十六、盟约选秀页（多人开局前）
+   ============================================================ */
+.covenant-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: min(1080px, 94vw);
+  /*
+    ★ 0.3.4：`max-height` → **确定高度**。
+    只写 max-height 时面板高度由内容撑开：右侧详情一长（阿米娅那条有 9 段），
+    整张选择框就跟着变高、把下面的「选择盟约」往外顶。
+    定高之后右侧详情自己滚（见 #covenant-detail 的 overflow-y）。
+  */
+  height: min(calc(100vh - 60px), 780px);
+  max-height: calc(100vh - 60px);
+  padding: 22px 24px;
+  background: #0e1013;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+}
+
+.covenant-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 12px;
+}
+.covenant-title {
+  font-size: 20px;
+  font-weight: 900;
+  letter-spacing: 0.34em;
+}
+.covenant-sub {
+  margin-top: 5px;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--faint);
+}
+.covenant-clock {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  color: var(--hl);
+}
+.covenant-clock span {
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1;
+}
+.covenant-clock em {
+  font-style: normal;
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  color: var(--faint);
+}
+.covenant-clock.urgent,
+.covenant-clock.urgent span {
+  color: var(--warn);
+}
+
+/* ---- 上层：玩家条 ---- */
+.covenant-players {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.covenant-player {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px 8px 8px;
+  background: #12151a;
+  border: 1px solid var(--line);
+  border-left: 2px solid transparent;
+  min-width: 210px;
+}
+/* 轮到的这位：左边一根荧光竖条 + 淡底 */
+.covenant-player.turn {
+  border-left-color: var(--hl);
+  background: linear-gradient(90deg, rgba(201, 250, 67, 0.09), #12151a 70%);
+}
+.covenant-avatar {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border: 1px solid var(--line-lit);
+  background: #0b0d10 center/cover no-repeat;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  color: var(--dim);
+}
+.covenant-player-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.covenant-player-name {
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.covenant-player-pick {
+  font-size: 10px;
+  color: var(--hl);
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+.covenant-player-pick.empty {
+  color: var(--faint);
+}
+
+/* ---- 中层：卡片 + 详情 ---- */
+.covenant-main {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  /* ★ 0.3.4：行高必须夹在容器内（minmax(0,1fr)），否则内容一长就把面板撑开 */
+  grid-template-rows: minmax(0, 1fr);
+  gap: 16px;
+  min-height: 0;
+  /* ★ 0.3.4：吃掉 head / players / footer 之外的全部高度 */
+  flex: 1 1 auto;
+}
+.covenant-grid {
+  display: grid;
+  /* ★ 0.3.1：盟约从 10 个扩到 16 个 ⇒ 6 列 × 3 行，仍然一眼扫完 */
+  grid-template-columns: repeat(6, 1fr);
+  gap: 10px;
+  align-content: start;
+  /* 屏幕矮的时候允许滚动，不要把下面的「选择盟约」顶出画面 */
+  min-height: 0;
+  overflow-y: auto;
+}
+.covenant-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 8px;
+  background: #12151a;
+  border: 1px solid var(--line);
+  cursor: pointer;
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%);
+  transition: border-color 0.12s, background 0.12s;
+}
+
+/*
+  ★★ 0.3（用户口径）：**卡面优先显示盟约头像，不显示名字**，
+  点开（`.active`）之后名字才出现 —— 名字和效果都在右边详情里看。
+  【为什么以前"看不到头像"？】
+  这一格原来用的 `.covenant-avatar-img` 在样式表里**根本没有尺寸**
+  （只有详情里那处写死 26px 的内联宽高），所以卡面上它被压成 0 高，
+  玩家只看得见名字 —— 这就是"没按我心意"的根因。
+*/
+.covenant-card .covenant-avatar-img {
+  width: 72px;
+  height: 72px;
+  flex: none;
+  background: #0b0d10 center/cover no-repeat;
+  /* 头像素材是 75×75 的方形图，缩到 72 正好不糊 */
+  border: 1px solid var(--line-lit);
+}
+.covenant-card.active .covenant-avatar-img {
+  border-color: var(--hl);
+}
+.covenant-card:hover {
+  border-color: var(--hl);
+}
+/* 我当前点开的那张 */
+.covenant-card.active {
+  border-color: var(--hl);
+  background: #171b20;
+}
+/* 被别人选走：压暗 + 不可点（用户口径：头像会暗淡下去） */
+.covenant-card.taken {
+  opacity: 0.32;
+  cursor: not-allowed;
+  filter: grayscale(1);
+}
+.covenant-sigil {
+  width: 38px;
+  height: 38px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--hl);
+  border: 1px solid var(--hl-dim);
+  /* 菱形纹章：和这套 UI 的"菱形标记"语汇一致 */
+  transform: rotate(45deg);
+}
+.covenant-sigil > span {
+  transform: rotate(-45deg);
+}
+.covenant-card.taken .covenant-sigil {
+  color: var(--dim);
+  border-color: var(--line-lit);
+}
+/*
+  ★ 名字默认不显示（用户口径：先看头像，点开再看名字）。
+  用 `display:none` 而不是 `opacity:0` —— 不然空白会占高度，10 张卡的高度不齐。
+*/
+.covenant-card-name {
+  display: none;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-align: center;
+}
+.covenant-card.active .covenant-card-name {
+  display: block;
+}
+
+/*
+  ★ 0.3.1：「开发中」角标。
+  用绝对定位压在卡面右上角，不占卡片高度 —— 免得 16 张卡的高度参差不齐。
+*/
+.covenant-card {
+  position: relative;
+}
+.covenant-card-pending {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  padding: 1px 4px;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  color: var(--warn);
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid var(--warn);
+  pointer-events: none;
+}
+.covenant-detail-pending {
+  margin: 8px 0;
+  padding: 6px 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--warn);
+  border-left: 2px solid var(--warn);
+  background: rgba(255, 200, 0, 0.06);
+}
+
+.covenant-detail {
+  border: 1px solid var(--line);
+  background: #101216;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  /*
+    ★ 0.3.4（用户口径：「阿米娅的右侧详细解释太长，会把选择框变大」）：
+    右侧详情**限高在中间那一行之内，自己滚**。
+    `min-height: 0` 让它在 grid 行里能被压缩（默认 min-height:auto 会撑破行），
+    原来那条 `min-height: 190px` 正是"撑大面板"的一半原因。
+  */
+  min-height: 0;
+  max-height: 100%;
+  overflow-y: auto;
+}
+.covenant-detail-empty {
+  margin: auto;
+  font-size: 11.5px;
+  color: var(--faint);
+  letter-spacing: 0.1em;
+}
+.covenant-detail-name {
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.covenant-detail-brief {
+  font-size: 12px;
+  color: var(--hl);
+  letter-spacing: 0.06em;
+}
+.covenant-detail p {
+  font-size: 11.5px;
+  line-height: 1.75;
+  color: var(--text-dim);
+}
+.covenant-detail-taken {
+  margin-top: auto;
+  font-size: 11px;
+  color: var(--warn);
+}
+
+/* ---- 下层：提示 + 选择 ---- */
+.covenant-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+.covenant-hint {
+  font-size: 11.5px;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+.covenant-foot .primary-btn {
+  min-width: 132px;
+  padding: 10px 18px;
+}
+/* 不能点的时候：灰掉，别让它看起来"按了没反应" */
+.covenant-foot .primary-btn:disabled {
+  background: #1a1e23;
+  border-color: var(--line-lit);
+  color: var(--faint);
+  cursor: not-allowed;
+}
+
+/* ============================================================
+   十七、对局内玩家列表里的盟约徽章
+   ============================================================ */
+/*
+  ★★ 0.3（用户口径）：这一格也**先给人看头像**，名字和效果点开再说。
+  做成 20×20 的小方块，和玩家头像一样是"图"，不占字宽。
+*/
+.player-covenant {
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  margin-top: 3px;
+  padding: 0;
+  background: #0b0d10 center/cover no-repeat;
+  border: 1px solid var(--hl-dim);
+  cursor: pointer;
+  align-self: flex-start;
+  /* 小图上不加字 —— 里面的文字节点由 main.ts 清空，这里兜个底 */
+  font-size: 0;
+  line-height: 0;
+}
+.player-covenant:hover {
+  background: rgba(201, 250, 67, 0.12);
+}
+
+/* ============================================================
+   ★★ 0.3.1 盟约：两种"不是普通刷新"的辨识标记
+   ------------------------------------------------------------
+   用户口径：**特殊刷新**（卡牌商店）和**免费刷新**（坎诺特商店）
+   都要"一眼看得出"，而且彼此不能混。所以用两套颜色：
+
+     · 卡牌商店「特殊刷新」—— 猎手顾问（必定 2 张同名）/ 博学多通（高费）
+       → 金 `--res`（#F5C544）。配色口径里金 = 资源 / 活动入口。
+     · 坎诺特「免费刷新」—— 特别优惠（本局第一次商店 3 次）
+       → 荧光黄绿 `--hl`（#C9FA43）。它是"系统高亮 / 当前可白嫖"。
+
+   ★ 为什么角标要写次数（×3 / ×2 / ×1）？
+     免费刷新只有 3 次，玩家必须知道还剩几次；用完之后按钮会跳回 4 金，
+     没有这个数字就会被当成"又坏了"。
+   ============================================================ */
+
+/* 刷新按钮上的小角标（两个按钮共用一套底座） */
+.perk-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 1px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  line-height: 1.6;
+  vertical-align: 1px;
+  white-space: nowrap;
+  border: 1px solid rgba(0, 0, 0, 0.35);
+}
+
+.perk-badge.special {
+  background: var(--res);
+  color: #14100a;
+}
+
+.perk-badge.free {
+  background: var(--hl);
+  color: #101408;
+}
+
+/* 卡牌商店刷新按钮：攒着一次特殊刷新时，整颗按钮描金边 */
+#btn-refresh.is-special {
+  border-color: var(--res);
+  color: var(--res);
+  box-shadow: inset 0 0 0 1px rgba(245, 197, 68, 0.22), 0 0 10px rgba(245, 197, 68, 0.16);
+}
+
+/* 坎诺特商店刷新按钮：免费期间走荧光黄绿（和"花金币"的绿按钮分开） */
+#shop-round-reroll.is-free {
+  border-color: var(--hl);
+  color: var(--hl);
+  background: linear-gradient(180deg, rgba(201, 250, 67, 0.16), rgba(201, 250, 67, 0.05));
+  box-shadow: inset 0 0 0 1px rgba(201, 250, 67, 0.22), 0 0 12px rgba(201, 250, 67, 0.14);
+}
+
+#shop-round-reroll.is-free .cost {
+  color: var(--hl);
+  font-weight: 900;
+}
+
+/* 卡牌商店：被「特殊刷新」换出来的格子（金边 + 右上角小角标） */
+.shop-slot.special {
+  /* 稀有度色是 main.ts 写在内联 style 上的，只有 !important 压得住 */
+  border-color: var(--res) !important;
+  box-shadow: inset 0 0 18px rgba(245, 197, 68, 0.1), 0 0 10px rgba(245, 197, 68, 0.12);
+}
+
+.shop-special-badge {
+  position: absolute;
+  top: -7px;
+  right: 6px;
+  padding: 0 5px;
+  border-radius: 1px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  color: #14100a;
+  background: var(--res);
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* ============================================================
+   主界面 · 干员头像选择（0.3.2 重做，用户："这一块不好看"）
+   ------------------------------------------------------------
+   改之前的样子：一块纯黑矩形浮在右边，里面 96px 空框 + 一句灰字，
+   下面 60px 小图排成一片、8px 圆角、选中态还是 0.2 的**蓝光**
+   —— 和 0.3 的黑灰白 + 荧光黄绿完全不是一套。
+
+   现在按 0.3 的语汇重排：
+     · 直角 + 细线分栏（标题栏 / 预览区 / 头像墙三段，用 1px 线切开）；
+     · 点阵底纹 + 右上角一团极淡的荧光辉光（和左边的主按钮同源，不再"浮着"）；
+     · 荧光黄绿**只出现在"当前选中的那一张"**（边框 + 菱形标记 + 底部色条），
+       其余头像统一压暗一档，整墙安静下来，选中的那张才会跳出来；
+     · 预览框加四角括号（十字准星语汇），选中之后括号变亮。
+   ★ 只重新排版/上色，DOM 结构与所有 id 没动（`#avatar-picker-preview` / `#avatar-grid` 等）。
+   ============================================================ */
+
+/*
+  ★★ 0.3.3：面板外壳从 `.avatar-picker` 改名叫 `.avatar-card` ——
+  因为 `#avatar-picker` 现在是**全屏遮罩**（见 styles.css），
+  背景/描边/宽度这些"面板属性"必须落在内层卡片上。
+  宽度也顺势从 452px 放到 720px：它不再和主菜单左右分栏，独占一屏可以铺开。
+*/
+.avatar-card {
+  width: min(720px, 94vw);
+  /* 分栏自己做，所以外层不留内边距；段与段之间用细线切 */
+  padding: 0;
+  gap: 0;
+  border-radius: 0;
+  border: 1px solid var(--line);
+  background:
+    radial-gradient(120% 64% at 100% 0%, rgba(201, 250, 67, 0.055), transparent 62%),
+    radial-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px) 0 0 / 14px 14px,
+    linear-gradient(180deg, #101215, #0b0c0e);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+}
+
+/* 标题栏：左侧一道 2px 荧光条，是整块面板的"起笔" */
+.avatar-card-head {
+  position: relative;
+  padding: 14px 18px 12px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(90deg, rgba(201, 250, 67, 0.09), transparent 46%);
+}
+
+.avatar-card-head::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--hl);
+}
+
+.avatar-picker-title {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.24em;
+  color: var(--text);
+}
+
+.avatar-picker-count {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- 预览区：大头像 + 名字 / 提示 ---- */
+.avatar-picker-body {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 16px 12px;
+}
+
+.avatar-picker-preview {
+  position: relative;
+  flex: none;
+  width: 104px;
+  height: 104px;
+  border-radius: 0;
+  border: 1px solid var(--line-lit);
+  background: #0a0b0d;
+  color: #4a5058;
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+  /* ★ 必须 nowrap：预览框是 flex 容器，中文在窄格里会被逐字折行（截图里就是竖排的） */
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+/* 四角括号：十字准星语汇。空框时很淡，选中之后变亮（.has-avatar） */
+.avatar-picker-preview::before,
+.avatar-picker-preview::after {
+  content: '';
+  position: absolute;
+  width: 11px;
+  height: 11px;
+  border: 1px solid var(--hl);
+  opacity: 0.28;
+  transition: opacity 0.15s;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.avatar-picker-preview::before {
+  left: 0;
+  top: 0;
+  border-right: 0;
+  border-bottom: 0;
+}
+
+.avatar-picker-preview::after {
+  right: 0;
+  bottom: 0;
+  border-left: 0;
+  border-top: 0;
+}
+
+.avatar-picker-preview.has-avatar::before,
+.avatar-picker-preview.has-avatar::after {
+  opacity: 0.95;
+}
+
+.avatar-picker-preview.has-avatar {
+  border-color: rgba(201, 250, 67, 0.35);
+  box-shadow: inset 0 0 18px rgba(201, 250, 67, 0.08);
+}
+
+.avatar-picker-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  justify-content: center;
+}
+
+.avatar-picker-name {
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.avatar-picker-hint {
+  font-size: 11px;
+  line-height: 1.85;
+  color: var(--text-dim);
+}
+
+/* ---- 头像墙 ---- */
+/*
+  ★ 用 grid（不是 flex）：格子的尺寸是**写死的 60×60**，不再依赖行高/纵横比 ——
+    0.3.0 那次"头像上下重叠"就是 Grid + `aspect-ratio` 算错行高导致的，
+    固定尺寸之后 grid 反而是最稳的（每行对齐、间距均匀）。
+  `auto-fill` 让窄屏自动少几列，`space-between` 把余量平分到列间，不会挤成一边。
+*/
+.avatar-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 60px);
+  justify-content: space-between;
+  align-content: flex-start;
+  min-height: 256px;
+  padding: 12px 16px 16px;
+  gap: 10px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  scrollbar-width: thin;
+  scrollbar-color: #2c3238 transparent;
+}
+
+.avatar-grid::-webkit-scrollbar {
+  width: 8px;
+}
+
+.avatar-grid::-webkit-scrollbar-thumb {
+  background: #2c3238;
+}
+
+/*
+  格子：直角细框。没选中的图压暗一档（saturate/brightness）——
+  这不是"变丑"，是为了让整面墙安静下来、选中的那一张才跳得出来。
+*/
+.avatar-option {
+  width: 60px;
+  height: 60px;
+  border-radius: 0;
+  border: 1px solid #262a30;
+  background: #14171b;
+  filter: saturate(0.82) brightness(0.92);
+  transition: transform 0.12s, border-color 0.12s, box-shadow 0.12s, filter 0.12s;
+}
+
+.avatar-option:hover {
+  transform: translateY(-2px);
+  border-color: var(--hl);
+  filter: none;
+}
+
+/* 选中的那个：荧光边框 + 右下菱形标记 + 底部色条（三处一起说"就是它"） */
+.avatar-option.selected {
+  border-color: var(--hl);
+  box-shadow: 0 0 0 1px var(--hl) inset, 0 0 14px rgba(201, 250, 67, 0.2);
+  filter: none;
+}
+
+.avatar-option.selected::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--hl);
+}
+
+.avatar-option.selected::before {
+  content: '';
+  position: absolute;
+  right: 4px;
+  top: 4px;
+  width: 6px;
+  height: 6px;
+  background: var(--hl);
+  transform: rotate(45deg);
+  z-index: 2;
+}
+
+/* 窄屏：整块退到上方堆叠时也别超出窗口 */
+@media (max-width: 1080px) {
+  .avatar-picker {
+    width: min(452px, 92vw);
+  }
+
+  .avatar-grid {
+    min-height: 200px;
+    max-height: 34vh;
+  }
+}
+
+/* 头像分组条（干员 / 默认 / 动态 / 纪念 / 活动）——
+   和右侧栏页签同一套语汇：细分隔线 + 激活态荧光下划线 */
+.avatar-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--line);
+}
+
+.avatar-tab {
+  flex: none;
+  padding: 8px 13px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: transparent;
+  color: #5a6068;
+  font-family: inherit;
+  font-size: 11.5px;
+  letter-spacing: 0.12em;
+  cursor: pointer;
+  transition: color 0.12s, background 0.12s, box-shadow 0.12s;
+}
+
+.avatar-tab:first-child {
+  border-left: 0;
+}
+
+.avatar-tab:hover {
+  color: var(--text);
+  background: #171a1f;
+}
+
+.avatar-tab.active {
+  color: var(--hl);
+  background: #14171b;
+  box-shadow: inset 0 -2px 0 var(--hl);
+}
+
+.avatar-tab-count {
+  margin-left: 6px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0;
+  color: #4d545c;
+}
+
+.avatar-tab.active .avatar-tab-count {
+  color: var(--hl-dim);
+}
+
+/*
+  ★★ 0.3.3：头像面板从"常驻右栏"变成"隐藏式浮层"之后，这一条必须删掉 ——
+  它原本给面板钉了 `height: min(84vh, 780px)`（防止切分组时高度跳变）。
+  现在面板外面多了一层全屏遮罩 `.avatar-picker`，给它钉高度会把遮罩压成
+  780px 高的一条，浮层就贴顶了。高度约束改到内层 `.avatar-card` 上
+  （见 styles.css 的 `.avatar-card { max-height }`）。
+*/
+
+/*
+  ★★ 0.3.2 修（用户报"点开盟约看详情，右边那个头像只显示一小块"）：
+  详情里的头像是 `background-image` 画的，但 `center/cover` 只写在
+  `.covenant-card .covenant-avatar-img` 这一条下面，**详情里没有** ——
+  于是 span 按素材原始尺寸（75×75）铺开、被外框裁掉，只剩左上角一小块。
+  这里给它自己的尺寸和铺法（顺便比原来 26px 大一点，和 15px 的标题更配）。
+*/
+.covenant-detail-name .covenant-avatar-img {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border: 1px solid var(--line-lit);
+  background: #0b0d10 center/cover no-repeat;
+}
+
+/* ============================================================
+   十八、0.3.3 界面重排的皮肤细节
+   ------------------------------------------------------------
+   布局在 styles.css（新增的章节里），这里只补"方舟味"那点东西：
+   直角、发丝线、大字距、左侧色条。全部只碰颜色/描边，不动尺寸位置。
+   ============================================================ */
+
+/* 主界面底部工具条：分隔线用发丝线，别用默认的半透明白 */
+.menu-toolbar {
+  border-top-color: var(--line);
+}
+.menu-toolbar-sep {
+  background: var(--line);
+}
+
+/* 头像块 / 工具按钮：直角 + 发丝线；hover 才亮成荧光 */
+.menu-avatar-chip,
+.menu-tool-btn,
+.avatar-close-btn {
+  border-radius: 0;
+  border-color: var(--line-lit);
+}
+.menu-avatar-chip:hover {
+  border-color: var(--hl);
+  background: #16191d;
+}
+.menu-tool-btn:hover {
+  color: var(--hl);
+  border-color: var(--hl);
+}
+.menu-avatar-box {
+  border-radius: 0;
+  border-color: var(--line-lit);
+  background: #15181c;
+}
+.menu-avatar-box.has-avatar {
+  border-color: var(--hl-dim);
+}
+.menu-avatar-chip:hover .menu-avatar-edit {
+  color: var(--hl);
+}
+
+/* 眉标：方舟那种"英文小字 + 超大字距"，比中文更适合拉间距 */
+.menu-kicker,
+.lobby-kicker {
+  color: #4d545c;
+  letter-spacing: 0.46em;
+  margin-right: -0.46em;
+}
+
+/* 房间面板 / 头像面板：直角 + 深底 + 一道上边强调线（和确认弹窗同一套） */
+.lobby-wrap,
+.avatar-card {
+  border-radius: 0;
+  background: #101215;
+  border-color: var(--line-lit);
+}
+
+.lobby-head {
+  border-bottom-color: var(--line);
+}
+
+/* 房间号信息条：左侧一条荧光竖条 = "这是本页最重要的一个数" */
+.lobby-code-row {
+  border-radius: 0;
+  border-color: var(--line);
+  border-left: 2px solid var(--hl);
+  background: #12151a;
+}
+#lobby-overlay .lobby-code-big {
+  color: var(--text);
+  letter-spacing: 0.3em;
+}
+.lobby-code-label,
+.lobby-code-hint {
+  color: #4d545c;
+}
+
+/* 左右两栏：直角 + 极淡底；栏目标题用系统高亮的暗档，一眼看出是"标签" */
+.lobby-col {
+  border-radius: 0;
+  border-color: var(--line);
+  background: #0e1114;
+}
+.lobby-col-title {
+  color: #6b737c;
+  letter-spacing: 0.28em;
+}
+.lobby-count {
+  color: var(--hl);
+}
+
+.lobby-foot {
+  border-top-color: var(--line);
+}
+
+/* 玩家行：一行一行发丝线隔开（比每行一块圆角底更像名单） */
+#lobby-overlay .net-player {
+  border-radius: 0;
+  background: #12151a;
+  border: 1px solid transparent;
+}
+#lobby-overlay .net-player.me {
+  border-color: var(--hl-dim);
+  background: #151a1e;
+}
+#lobby-overlay .net-player-avatar {
+  border-radius: 0;
+  border-color: var(--line-lit);
+}
+
+/* 头像浮层里的"当前头像"信息条 */
+.avatar-picker-body {
+  border-radius: 0;
+  border-color: var(--line);
+  background: #0e1114;
+}
+.avatar-picker-title {
+  letter-spacing: 0.2em;
+}
+.avatar-picker-label {
+  color: #4d545c;
+}
+
+/* 音乐控制台：和修改器面板同一档（直角、发丝线、深底） */
+.music-panel {
+  background: #101215;
+  border-color: var(--line-lit);
+  border-radius: 0;
+}
+.music-head {
+  border-bottom-color: var(--line);
+}
+.music-head-title {
+  color: var(--text);
+  letter-spacing: 0.24em;
+}
+.music-block-label {
+  color: #4d545c;
+  letter-spacing: 0.28em;
+}
+.music-seek {
+  background: var(--line-lit);
+}
+.music-seek::-webkit-slider-thumb,
+.music-seek::-moz-range-thumb {
+  background: var(--hl);
+}
+.music-volume {
+  background: var(--line-lit);
+}
+.music-volume::-webkit-slider-thumb,
+.music-volume::-moz-range-thumb {
+  background: var(--text);
+}
+.music-state {
+  color: #4d545c;
+}
+.music-mode-btn {
+  border-radius: 0;
+  border-color: var(--line-lit);
+}
+.music-mode-btn.active {
+  color: var(--hl);
+  border-color: var(--hl);
+}
+
+/* ============================================================
+   十九、0.3.3 局域网房间列表（皮肤细节）
+   ------------------------------------------------------------
+   规矩和别处一样：直角、发丝线、等宽数字、荧光只给"能点的那个"。
+   ============================================================ */
+.menu-panel-wide,
+.lan-room,
+.lan-room-btn,
+.lan-room-lock,
+.lan-rooms-refresh,
+.lan-rooms-empty {
+  border-radius: 0;
+}
+
+.lan-rooms-title,
+.lan-rooms-or {
+  color: #4d545c;
+}
+
+.lan-rooms-state {
+  color: #6b737c;
+  letter-spacing: 0.08em;
+}
+
+.lan-rooms-refresh {
+  border-color: var(--line-lit);
+  color: #6b737c;
+}
+.lan-rooms-refresh:hover {
+  color: var(--hl);
+  border-color: var(--hl);
+}
+
+/* 一行房间：左边那道 2px 竖条是唯一的颜色信号（可进 = 荧光 / 我的座位 = 资源金） */
+.lan-room {
+  background: #12151a;
+  border-color: var(--line);
+  border-left: 2px solid var(--hl);
+}
+.lan-room.dim {
+  border-left-color: var(--line-lit);
+}
+.lan-room.mine {
+  border-left-color: var(--res);
+}
+
+/* 房间号 = 等宽大字（和房间等待页那个大号房间码同一套字） */
+.lan-room-code {
+  font-family: var(--mono);
+  letter-spacing: 0.2em;
+}
+
+.lan-room-host {
+  letter-spacing: 0.04em;
+}
+
+.lan-room-meta {
+  color: #6b737c;
+  letter-spacing: 0.08em;
+}
+
+.lan-room-btn {
+  background: var(--hl);
+  border-color: var(--hl);
+  color: #0b0c0e;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+}
+.lan-room-btn.resume {
+  background: var(--res);
+  border-color: var(--res);
+}
+
+.lan-room-lock {
+  /* 灰章要"安静"但不能"看不清" —— 它正是玩家想知道的那句原因 */
+  color: #9aa1a9;
+  border-color: var(--line-lit);
+  background: rgba(255, 255, 255, 0.04);
+  letter-spacing: 0.16em;
+}
+
+.lan-rooms-empty {
+  border-color: var(--line);
+  background: rgba(255, 255, 255, 0.012);
+  color: #5a616a;
+}
+
+/* ============================================================
+   二十、0.3.4 图鉴 + 组队器（皮肤）
+   ============================================================
+   只管**颜色 / 圆角 / 描边 / 字距**，结构与布局在 styles.css 的「二十」。
+   口径照抄本文件已有的那套：
+     · 荧光黄绿 --hl 只做**系统高亮**（当前视图 / 已选中 / 已生效 / 开关打开）
+     · 资源金 --res 给金币与活动，红 --warn 只给警示
+     · 面板暗底 #0f1114 / #12151a，描边 --line
+   ============================================================ */
+
+/* 遮罩只留半透黑 —— 背景与描边落在内层 .codex-card 上（和头像选择器同一口径） */
+.codex-overlay {
+  background: rgba(4, 5, 7, 0.74);
+}
+.codex-card {
+  border-radius: 2px;
+  background: #0f1114;
+  border: 1px solid var(--line);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.78);
+}
+
+.codex-head {
+  border-color: var(--line);
+}
+.codex-title {
+  letter-spacing: 0.22em;
+}
+.codex-sub,
+.codex-count {
+  color: #6b737c;
+}
+.codex-close-btn {
+  border-color: var(--line);
+  color: #8b9199;
+}
+.codex-close-btn:hover {
+  border-color: var(--hl);
+  color: var(--hl);
+}
+
+/* 入口按钮：平时安静，hover 才亮荧光（它是辅助入口，不该抢羁绊列表的戏） */
+.codex-open-btn {
+  border-color: var(--line);
+  color: #8b9199;
+  letter-spacing: 0.18em;
+}
+.codex-open-btn:hover {
+  border-color: var(--hl);
+  color: var(--hl);
+}
+
+/* 左侧 rail：当前视图用荧光左边条点出（和房间列表那套一致） */
+.codex-rail-btn {
+  border-color: var(--line);
+  background: #12151a;
+  color: #6b737c;
+  letter-spacing: 0.14em;
+}
+.codex-rail-btn:hover {
+  color: var(--text);
+}
+.codex-rail-btn.active {
+  color: var(--text);
+  border-color: var(--line-lit);
+  border-left: 2px solid var(--hl);
+  background: #161a1f;
+}
+
+.codex-group-head {
+  border-color: var(--line);
+}
+.codex-group-title {
+  color: var(--text);
+  letter-spacing: 0.18em;
+}
+.codex-group-count,
+.codex-group-note {
+  color: #6b737c;
+}
+
+/* 棋子卡 / 藏品卡：直角、暗底，和商店卡同一套手感 */
+.codex-unit,
+.codex-item {
+  border-radius: 0;
+  border-color: var(--line);
+  background: rgba(255, 255, 255, 0.02);
+}
+.codex-unit-portrait,
+.codex-item-icon {
+  border-radius: 0;
+  border-color: var(--line);
+  background: #0b0d10;
+}
+.codex-unit-name,
+.codex-item-name {
+  color: var(--text);
+}
+.codex-unit-trait {
+  border-color: var(--line);
+  color: #8b9199;
+}
+.codex-unit-skill {
+  color: #6b737c;
+}
+.codex-unit-skill b {
+  color: #aeb4bb;
+}
+.codex-item-desc {
+  color: #6b737c;
+}
+
+/* ---- 组队器 ---- */
+.tb-left-head,
+.tb-right-head,
+.tb-traits-head {
+  border-color: var(--line);
+  color: #6b737c;
+}
+
+.tb-unit {
+  border-radius: 0;
+  border-color: var(--line);
+  background: rgba(255, 255, 255, 0.02);
+}
+.tb-unit:hover {
+  filter: brightness(1.3);
+}
+/* 已放进栏位：荧光描边 —— "已选中"正是 --hl 的用途 */
+.tb-unit.picked {
+  border-color: var(--hl);
+  background: rgba(201, 250, 67, 0.08);
+}
+.tb-unit.picked .tb-unit-name {
+  color: var(--text);
+}
+
+.tb-unit-group-head {
+  border-color: var(--line);
+  color: #6b737c;
+  letter-spacing: 0.14em;
+}
+
+.tb-slot {
+  border-radius: 0;
+  border-color: var(--line-lit);
+  background: rgba(255, 255, 255, 0.015);
+}
+.tb-slot:hover {
+  border-color: var(--hl);
+}
+.tb-slot.filled {
+  border-color: var(--line);
+  background: #14181d;
+}
+.tb-slot-name {
+  color: #8b9199;
+}
+.tb-slot-index {
+  color: #5a616a;
+}
+
+.tb-trait-row {
+  border-radius: 0;
+  border-color: var(--line);
+  background: rgba(255, 255, 255, 0.02);
+}
+.tb-trait-row.active {
+  border-color: var(--hl-dim);
+  border-left: 2px solid var(--hl);
+}
+.tb-trait-row.active .tb-trait-name {
+  color: var(--text);
+}
+.tb-trait-row.active .tb-trait-count {
+  color: var(--hl);
+}
+.tb-trait-desc {
+  color: #6b737c;
+}
+.tb-trait-count {
+  color: #8b9199;
+}
+
+.tb-traits-empty {
+  border-color: var(--line);
+  background: rgba(255, 255, 255, 0.012);
+  color: #5a616a;
+}
+
+.tb-note {
+  color: #5a616a;
+}
+.tb-toggle {
+  border-radius: 2px;
+  border-color: var(--line);
+  background: #12151a;
+  color: #8b9199;
+  letter-spacing: 0.12em;
+}
+.tb-toggle:hover {
+  border-color: var(--line-lit);
+  color: var(--text);
+}
+.tb-toggle.on {
+  border-color: var(--hl);
+  color: var(--hl);
+}
+.tb-switch {
+  border-color: var(--line-lit);
+  background: #0b0d10;
+}
+.tb-toggle.on .tb-switch {
+  border-color: var(--hl);
+}
+.tb-switch::after {
+  background: #5a616a;
+}
+.tb-toggle.on .tb-switch::after {
+  background: var(--hl);
+}
+
+/* 商店卡「计划」角标：荧光底 + 深色字，和「已拥有」那种灰角标一眼分开 */
+.shop-plan-badge {
+  background: var(--hl);
+  color: #0b0c0e;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+}

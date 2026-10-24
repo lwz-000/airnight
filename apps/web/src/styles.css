@@ -1,0 +1,7890 @@
+/* ============================================================
+   失序协议 界面样式
+   ============================================================
+   布局（云顶之弈风格）：
+     ┌──────────────────────────────────────────────┐
+     │ 顶部状态栏：金币 / 生命 / 等级 / 人口 / 阶段      │
+     ├────────┬──────────────────────────┬──────────┤
+     │ 左侧    │                          │ 右侧      │
+     │ 羁绊    │      3D 战场             │ 日志/联机  │
+     │ 面板    │                          │          │
+     ├────────┴──────────────────────────┴──────────┤
+     │ 底部：等级经验 │ 商店 5 格 + 刷新 + 开战 │ 备战席 │
+     └──────────────────────────────────────────────┘
+   ============================================================ */
+
+/*
+  ★ 0.3：全局字体 = 思源黑体（Source Han Sans / Noto Sans SC）。
+
+  【为什么自己托管一份，而不是写 `font-family: 'Noto Sans SC'` 了事？】
+  「方舟味」有一大半是字体给的，而字体能不能稳定出现完全取决于**玩家机器上装没装**。
+  写系统字体名的话：自己电脑上有、朋友的电脑上没有，同一套界面就长成两个样子 ——
+  这种"在我这儿是好的"最难查。所以把子集化后的 woff2 放进 `public/fonts/`，
+  由 Vite 一起发出去，谁的浏览器都一样。
+
+  【为什么是可变字体（一个文件覆盖 100~900）？】
+  标题要 700、大字标题还有 800/900，正文要 400。静态字体得切成 4 份、每份都要下载；
+  可变字体只下一次，`font-weight` 写多少就是多少。
+
+  【体积】原始 TTF 17.7 MB -> 子集化后 1.9 MB（GB2312 全集 + 本工程用到的所有字符）。
+  子集里没有的字（比如玩家昵称里的生僻字）会自动回落到系统字体 ——
+  只是那个字长得不一样，不会变成方块。
+*/
+@font-face {
+  font-family: 'SourceHanSans';
+  src: url('/fonts/NotoSansSC.woff2') format('woff2-variations');
+  font-weight: 100 900;
+  font-style: normal;
+  /* 字体还没到就用系统字体先顶上，别让首屏白一下（swap 而不是 block） */
+  font-display: swap;
+}
+
+:root {
+  --bg: #0b0d17;
+  --panel: rgba(18, 22, 38, 0.9);
+  --panel-solid: #121626;
+  --panel-border: rgba(120, 150, 220, 0.22);
+  --text: #e8edf8;
+  --text-dim: #8e9bc0;
+  --accent: #4a9eff;
+  --accent-strong: #6fb6ff;
+  --gold: #ffd75e;
+  --danger: #ff5a5a;
+  --success: #3ddc84;
+  --radius: 10px;
+
+  /*
+    顶部栏高度 / 底部栏高度 —— 中间留给战场。
+
+    ⚠️ 底部栏这个值改过很多轮，把算法记下来，免得以后又踩坑：
+
+    「UI 显示不全」的根因是 `--dock-h` 写得太小，而 `.shop-slots` 是
+    `flex: 1; min-height: 0` —— 空间不够时卡片被压扁、下半截直接裁掉。
+
+    但底栏也不能太高 —— 它每高 1px，3D 战场就少 1px。
+    我试过「大头像竖排卡片」，卡片要 226px 高，底栏得 350px，
+    结果 768 高的屏幕上战场只剩 366px，而且备战席被挤到每格 34px —— 太过了。
+
+    现在改成**横向卡片**（头像在左、信息在右），卡片只要约 96px 高：
+      卡片 ≈ 头像 76 + 文字行 20 = 96
+      底部栏 ≈ 96 + 标题行 33 + 间距 10 + 按钮行 40 + 内边距 32 = 211
+    取 232 作为最小值（留 21px 余量），屏幕高时按 27vh 长高，上限 280。
+    这样 768 高的屏幕上战场还有约 484px，备战席也能恢复宽度。
+  */
+  --top-h: 52px;
+  --dock-h: clamp(232px, 27vh, 280px);
+
+  /*
+    ★★ 0.3.5：整块 UI 的缩放系数（由 `main.ts` 的 `handleResize()` 按窗口算好写进来）。
+
+    【它解决什么】
+      小窗口（1280×720）时，顶栏那排"生命/等级/人口/回合/野怪/阶段 + 右侧按钮"
+      挤不下会换行、右端的「日志/玩家/藏品」被裁掉，商店 5 张卡也横向溢出；
+      大窗口（2560×1440）时反倒全部元素都只有原来那么大，
+      左右两栏像两张邮票、棋盘周围一大片空 —— 也就是用户说的
+      "小窗口很拥挤、大窗口会空"。
+
+    【做法】
+      UI 用**设计尺寸**写死（190px 的羁绊栏、232px 的底栏……），
+      再给这几个浮层挂 `zoom: var(--ui-scale)`：
+        · 缩放是**布局级**的（不是 transform），文字按最终字号重新栅格化，不糊；
+        · 元素的 `left/right/bottom` 也在同一套坐标系里，所以
+          "两栏贴边、底栏贴底"这些约束照样成立；
+        · 1280 宽 × 0.8 ⇒ 逻辑空间变成 1600，正好等于设计基准，顶栏和 5 张商店卡都放得下；
+          2560 宽 × 1.5 ⇒ 面板、字号、间距一起长大，不再是一堆小字浮在大屏上。
+
+    【为什么不缩放 3D 画面】
+      棋盘是相机按"没被 UI 挡住的那块区域"框出来的（`handleResize` 量的是
+      `getBoundingClientRect()`，zoom 之后拿到的是**视觉尺寸**，正好对得上）。
+      它本来就会随窗口长，不需要也不应该再缩放一次。
+  */
+  --ui-scale: 1;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  /*
+    ★ 0.3：全局字体换成思源黑体（见文件开头 @font-face 的说明）。
+    后面的系统字体只是**兜底**：字体文件还没下载完、或者子集里缺这个字时才会用到。
+    'Noto Sans SC' / 'Microsoft YaHei' 放在兜底位是因为它们和思源黑体字面最接近，
+    真回落时也不至于一眼看出来换字体了。
+  */
+  font-family: 'SourceHanSans', 'Noto Sans SC', 'Microsoft YaHei', system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  user-select: none;
+}
+
+/*
+  画布底下垫一层「深空」氛围：
+    · radial-gradient 做中心微亮、四周更暗的晕影（vignette）
+    · repeating-linear-gradient 用极低透明度做一层横向微条纹，
+      比纯色多一点材质感，又不会抢画面
+  这些都只是 3D 画面的兜底底色 —— 真正好看的是程序化生成的星空背景。
+*/
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(120% 90% at 50% 0%, rgba(64, 96, 180, 0.16), transparent 60%),
+    radial-gradient(90% 70% at 50% 100%, rgba(120, 60, 160, 0.12), transparent 65%),
+    repeating-linear-gradient(
+      0deg,
+      rgba(255, 255, 255, 0.014) 0px,
+      rgba(255, 255, 255, 0.014) 1px,
+      transparent 1px,
+      transparent 3px
+    );
+}
+
+#stage {
+  position: fixed;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+}
+
+/* ============================================================
+   ★ 0.3.5 UI 缩放（小窗口不再挤、大窗口不再空）
+   ============================================================
+   这五块都是「贴着屏幕边」的浮层，尺寸全部用设计值写死，
+   所以统一挂一个 `zoom: var(--ui-scale)`，让它们按窗口一起放大/缩小：
+
+     · 缩放是**布局级**的（Chromium 的 zoom，不是 transform），
+       字会按最终字号重新栅格化 —— 大屏上字变大但不模糊；
+     · 元素自身的 `left/right/top/bottom` 也在这套坐标系里，
+       所以"两栏贴边、底栏贴底、战斗条居中"这些约束不会被破坏；
+     · `#stage`（3D 画布）**不在**这张名单里：棋盘由相机按"没被 UI 挡住的那块"
+       自己框（`handleResize` 用 `getBoundingClientRect()` 量，zoom 后拿到的正好是视觉尺寸）。
+   ============================================================ */
+#topbar,
+#traits,
+#sidebar,
+#dock,
+#battle-bar {
+  zoom: var(--ui-scale);
+}
+
+/*
+  主界面和结算页的**内容块**也跟着缩放（不是整层遮罩 —— 遮罩必须始终铺满屏幕）。
+  这两块在 2560 上原本是一个 560px / 960px 的小方块浮在大片空背景中间，
+  和已经放大的游戏内 UI 摆在一起会很割裂。
+*/
+.menu-main,
+.result-shell {
+  zoom: var(--ui-scale);
+}
+
+/* ---------------- 通用组件 ---------------- */
+
+.panel-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--accent-strong);
+  margin-bottom: 8px;
+}
+
+.ghost-btn,
+.primary-btn {
+  font-family: inherit;
+  font-size: 13px;
+  padding: 7px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--panel-border);
+  background: rgba(40, 50, 80, 0.6);
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, transform 0.08s;
+  white-space: nowrap;
+}
+
+.ghost-btn:hover,
+.primary-btn:hover {
+  background: rgba(60, 80, 130, 0.8);
+  border-color: var(--accent);
+}
+
+.ghost-btn:active,
+.primary-btn:active {
+  transform: scale(0.97);
+}
+
+.ghost-btn.wide {
+  width: 100%;
+}
+
+.primary-btn {
+  background: linear-gradient(180deg, #2f6fd0, #1f4e9c);
+  border-color: var(--accent);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 9px 22px;
+}
+
+.primary-btn:hover {
+  background: linear-gradient(180deg, #3f86e8, #265cb4);
+}
+
+.primary-btn:disabled,
+.ghost-btn:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+/* 按钮里的金币花费标记 */
+.cost {
+  display: inline-block;
+  margin-left: 2px;
+  color: var(--gold);
+  font-weight: 700;
+}
+
+.mono {
+  font-family: 'Cascadia Code', 'Consolas', monospace;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* ---------------- 顶部状态栏 ---------------- */
+
+#topbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--top-h);
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  padding: 0 16px;
+  background: linear-gradient(180deg, rgba(11, 13, 23, 0.96), rgba(11, 13, 23, 0));
+  backdrop-filter: blur(6px);
+  z-index: 20;
+}
+
+.brand {
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  color: var(--accent-strong);
+  text-shadow: 0 0 22px rgba(74, 158, 255, 0.55);
+}
+
+.stat {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.stat-label {
+  font-size: 10.5px;
+  color: var(--text-dim);
+  letter-spacing: 0.06em;
+}
+
+.stat-value {
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.stat-value.gold {
+  color: var(--gold);
+}
+
+/* 测试模式下金币显示「∞」，用不同颜色区分，避免和真实金币混淆 */
+.stat-value.gold.testmode {
+  color: #b28cff;
+  text-shadow: 0 0 12px rgba(178, 140, 255, 0.6);
+}
+
+/* 测试模式按钮：开启时高亮，一眼看出当前在测试模式 */
+.ghost-btn.active {
+  background: linear-gradient(180deg, #6b4fbf, #4a3585);
+  border-color: #b28cff;
+  color: #fff;
+  font-weight: 700;
+  box-shadow: 0 0 12px rgba(178, 140, 255, 0.45);
+}
+
+.stat-value.hp {
+  color: var(--success);
+}
+
+/*
+  ★ 0.2.2：顶栏「野怪」那一格。平时用次要色（它只是提示，不该抢回合数的视线），
+  快到了（本回合 / 还剩 1~2 回合）才点亮成金色 ——
+  那是"该决定攒钱还是花钱"的时刻，值得看一眼。
+*/
+#stat-monster {
+  font-size: 14px;
+  color: var(--text-dim);
+}
+
+#stat-monster.soon {
+  color: var(--gold);
+  text-shadow: 0 0 10px rgba(255, 215, 94, 0.5);
+}
+
+.spacer {
+  flex: 1;
+}
+
+/* ---------------- 战斗播放控制条 ---------------- */
+
+#battle-bar {
+  position: fixed;
+  top: calc(var(--top-h) + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  /*
+    ★ 0.1.1：改成"竖着两行"（第一行还是原来的血条/对手/时间，
+    第二行是战斗中切换观战的列表 —— 见 index.html 里的说明）。
+    `align-items: stretch` 让第二行自动和第一行一样宽。
+  */
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 9px 16px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  backdrop-filter: blur(10px);
+  z-index: 25;
+  min-width: min(720px, 92vw);
+}
+
+/* 战斗条的第一行（原来的三个部分：我方血条 / 中间的控制 / 敌方血条） */
+.battle-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.battle-side {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
+.battle-side.team1 {
+  justify-content: flex-end;
+}
+
+.team-name {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.hp-track {
+  flex: 1;
+  height: 10px;
+  min-width: 60px;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.hp-fill {
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, #2fa8ff, #3ddc84);
+  transition: width 0.18s ease-out;
+}
+
+.hp-fill.enemy {
+  background: linear-gradient(90deg, #ff5a5a, #ff9a4a);
+  margin-left: auto;
+}
+
+.battle-center {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+/*
+  战斗时显示"在和谁打"。
+  放在战斗条中间偏左，紧挨着播放控制 —— 眼睛看战况的时候顺便就看到了。
+*/
+.battle-opponent {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(255, 90, 90, 0.16);
+  border: 1px solid rgba(255, 90, 90, 0.5);
+  color: #ffb3b3;
+  white-space: nowrap;
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/*
+  ============================================================
+   玩家列表（联机布阵阶段）—— 在右侧栏里
+  ============================================================
+  它从"战斗过程"那块地方分出一截：布局上父亲是 flex 列，
+  日志那块是 flex:1，所以列表一出现日志就自动让位。
+  列表自己限高 + 可滚动，免得人多了把日志挤没。
+*/
+.player-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  /*
+    现在「玩家」是独立的一页（右侧栏里只有它），所以不用再自己限高 ——
+    让外层的 .panel-block.grow 把它撑满，人多了整页滚动。
+    max-height 只作为极窄窗口下的兜底。
+  */
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.player-chip {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 8px;
+  border-radius: 9px;
+  border: 1px solid rgba(130, 165, 215, 0.35);
+  background: rgba(24, 32, 48, 0.85);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.player-chip:hover {
+  border-color: var(--accent);
+  background: rgba(40, 60, 95, 0.9);
+}
+
+/* 我自己：用主色描边，一眼找到 */
+.player-chip.me {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(74, 158, 255, 0.35) inset;
+}
+
+/* 正在看他的棋盘 */
+.player-chip.viewing {
+  background: rgba(74, 158, 255, 0.28);
+  border-color: #8fc4ff;
+}
+
+.player-chip.dead {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
+/* 头像（0.0.2 需求第 16 条）：玩家在主界面选的那个干员头像 */
+.player-chip-avatar {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.player-chip-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.player-chip-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+
+.player-chip-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+
+/* 等级 / 连胜连败 / 场上人数 这一行 */
+.player-chip-meta {
+  font-size: 10px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+.player-chip-hp {
+  flex: none;
+  font-weight: 700;
+  color: #6ee7a0;
+  font-variant-numeric: tabular-nums;
+  min-width: 26px;
+  text-align: right;
+}
+
+.player-chip-hp.low {
+  color: #ff8080;
+}
+
+.player-chip-hp.hidden-hp {
+  color: var(--text-dim);
+  letter-spacing: 2px;
+}
+
+.player-chip-sub {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+/* 「回到我的棋盘」：看别人阵容时才出现，颜色要显眼 */
+#btn-back-my-board {
+  margin-top: 7px;
+  width: 100%;
+  border-color: #ffd75e;
+  color: #ffd75e;
+}
+
+#seek {
+  width: 150px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+#battle-time {
+  font-size: 12px;
+  color: var(--text-dim);
+  min-width: 44px;
+  text-align: right;
+}
+
+.speed-group {
+  display: flex;
+  gap: 3px;
+}
+
+.speed-btn {
+  font-family: inherit;
+  font-size: 11px;
+  padding: 3px 6px;
+  border-radius: 5px;
+  border: 1px solid var(--panel-border);
+  background: rgba(40, 50, 80, 0.6);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.speed-btn.active {
+  background: var(--accent);
+  border-color: var(--accent-strong);
+  color: #fff;
+  font-weight: 700;
+}
+
+/* ---------------- 左侧：羁绊面板 ---------------- */
+
+#traits {
+  position: fixed;
+  top: calc(var(--top-h) + 8px);
+  left: 10px;
+  width: 190px;
+  max-height: calc(100vh - var(--top-h) - var(--dock-h) - 24px);
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  backdrop-filter: blur(10px);
+  overflow-y: auto;
+  z-index: 15;
+}
+
+.trait-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.trait-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 7px;
+  border-radius: 8px;
+  background: rgba(30, 38, 60, 0.6);
+  border-left: 3px solid transparent;
+  transition: background 0.15s, transform 0.08s;
+  /* 可点击：点一下看详情 */
+  cursor: pointer;
+}
+
+.trait-row:hover {
+  background: rgba(48, 62, 96, 0.85);
+  transform: translateX(2px);
+}
+
+.trait-row:active {
+  transform: translateX(3px) scale(0.99);
+}
+
+/* 已生效的羁绊：高亮 */
+.trait-row.active {
+  background: rgba(48, 90, 155, 0.72);
+  border-left-color: var(--accent-strong);
+}
+
+/* 已满级：金色 */
+.trait-row.maxed {
+  background: rgba(120, 96, 30, 0.7);
+  border-left-color: var(--gold);
+}
+
+/*
+  ★★ 0.3.3：羁绊图标从"纯色方块 + 首字"换成**一张图**
+  （黑底 + 四角取景框 + 字标，和游戏图标同一套语汇；出图见 scripts/gen-trait-relic-icons.ts）。
+  ★ 22px 是列表里的既有尺寸，图是 128 的，下采样后依然清楚。
+*/
+.trait-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  display: block;
+  object-fit: contain;
+  /* 未生效那张本来就压暗过，这里再加一点点整体弱化，让生效那行跳出来 */
+  opacity: 0.92;
+}
+
+.trait-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.trait-name {
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.trait-desc {
+  font-size: 10px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 数量标记：例如 2/4 */
+.trait-count {
+  font-size: 12px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.trait-count.active {
+  color: var(--accent-strong);
+}
+
+.trait-count.maxed {
+  color: var(--gold);
+}
+
+.trait-count.idle {
+  color: var(--text-dim);
+}
+
+.trait-empty {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.6;
+}
+
+/* ---------------- 右侧栏 ---------------- */
+
+#sidebar {
+  position: fixed;
+  top: calc(var(--top-h) + 8px);
+  right: 10px;
+  bottom: calc(var(--dock-h) + 10px);
+  width: 250px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 15;
+}
+
+/*
+  右侧栏的三个视图（日志 / 玩家 / 藏品）。
+  ============================================================
+  只有当前选中的那一个参与布局，其余带 .hidden 直接不占空间。
+  这就是"把玩家列表从战斗日志旁边拆出来"的关键 ——
+  一次只显示一屏内容，就不用把每块都压得很矮。
+*/
+.side-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+}
+
+/*
+  右上角的视图切换器（0.0.2 需求第 11 条：右上角日志改为切换类）。
+  做成"分段控件"的样子（连在一起的按钮），一眼能看出是互斥的三个选项。
+  第三个「藏品」在 0.0.2 里是 disabled 的占位（功能还没做）；
+  ★ 0.0.3 已经做完了，现在是正常的页签。
+*/
+.sidebar-tabs {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid rgba(120, 150, 220, 0.35);
+  border-radius: 9px;
+  overflow: hidden;
+  background: rgba(18, 24, 40, 0.6);
+}
+
+.sidebar-tab {
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: transparent;
+  border: 0;
+  border-left: 1px solid rgba(120, 150, 220, 0.22);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.sidebar-tab:first-child {
+  border-left: 0;
+}
+
+.sidebar-tab:hover:not(:disabled) {
+  background: rgba(74, 158, 255, 0.2);
+  color: var(--text);
+}
+
+.sidebar-tab.active {
+  background: rgba(74, 158, 255, 0.42);
+  color: #fff;
+}
+
+/* 没做的功能：明确地"灰掉"，而且光标也提示不可点 */
+.sidebar-tab:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+.panel-block {
+  padding: 11px 13px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  backdrop-filter: blur(10px);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.panel-block.grow {
+  flex: 1;
+}
+
+/* ---------------- 伤害统计（我方干员） ---------------- */
+
+.damage-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 170px;
+  overflow-y: auto;
+  font-size: 11.5px;
+}
+
+.damage-empty {
+  font-size: 10.5px;
+  color: var(--text-dim);
+  line-height: 1.6;
+}
+
+/* 表头：名字 / 造成 / 承受 / 治疗 */
+.dmg-header {
+  display: grid;
+  grid-template-columns: 1fr 46px 46px 46px;
+  gap: 4px;
+  padding: 0 5px 4px;
+  font-size: 9.5px;
+  color: var(--text-dim);
+  letter-spacing: 0.04em;
+}
+
+.dmg-col {
+  text-align: right;
+}
+
+.damage-row {
+  display: grid;
+  grid-template-columns: 1fr 46px 46px 46px;
+  gap: 4px;
+  align-items: center;
+  padding: 3px 5px;
+  border-radius: 6px;
+  background: rgba(30, 38, 60, 0.55);
+  /* 左边一道稀有度色条，一眼看出是几费干员 */
+  border-left: 3px solid transparent;
+}
+
+/* 已经阵亡的干员淡出 */
+.damage-row.dead {
+  opacity: 0.45;
+}
+
+.dmg-name {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.dmg-stars {
+  font-size: 8.5px;
+  color: var(--gold);
+  flex-shrink: 0;
+}
+
+.dmg-unit-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dmg-dealt {
+  text-align: right;
+  color: #ff9a6a;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.dmg-taken {
+  text-align: right;
+  color: #7fb8ff;
+  font-variant-numeric: tabular-nums;
+}
+
+.dmg-healed {
+  text-align: right;
+  color: var(--success);
+  font-variant-numeric: tabular-nums;
+}
+
+.log {
+  flex: 1;
+  overflow-y: auto;
+  font-size: 11px;
+  line-height: 1.6;
+  font-family: 'Cascadia Code', 'Consolas', monospace;
+  color: var(--text-dim);
+}
+.log-line {
+  padding: 1px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.log-tick {
+  color: #5f6d94;
+  margin-right: 5px;
+}
+
+.log-cast {
+  color: #b28cff;
+  font-weight: 700;
+}
+
+.log-damage {
+  color: #ff8a8a;
+}
+
+/* 我方打出的伤害（暖色，越亮越"我打出来的"） */
+.log-dealt {
+  color: #ffa76a;
+}
+
+/* 我方承受的伤害（冷色，和"打出"一眼就能区分开） */
+.log-taken {
+  color: #7fb8ff;
+}
+
+.log-kill {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.log-heal {
+  color: var(--success);
+}
+
+.log-end {
+  color: var(--gold);
+  font-weight: 700;
+}
+
+/* 羁绊发动 / 加成换人（羁绊日志 + 战斗日志里都用这两个颜色） */
+.log-trait-trigger {
+  color: #ffd76a;
+  font-weight: 700;
+  text-shadow: 0 0 6px rgba(255, 215, 106, 0.45);
+}
+
+/* ---------------- 野怪掉落的日志行（回合结算后写进战斗日志） ---------------- */
+
+/* 抬头一行：第几回合、这一波按击杀逐只结算 */
+.log-line.drop-title {
+  color: #ffd76a;
+  font-weight: 700;
+  margin-top: 4px;
+  border-bottom: 1px solid rgba(255, 215, 106, 0.25);
+}
+
+/* 每一只被打倒的野怪一行（含"没有掉落"——掉率对不对一眼能看出来） */
+.log-line.drop {
+  color: #8fe3c2;
+  padding-left: 2px;
+}
+/*
+  ★ 0.2 MujicaAve：fever 跨档的「宝藏」。
+  【为什么要比普通掉落更显眼？】
+  宝藏是**跨回合攒出来的**大件（一档一辈子只有一次），
+  而日志面板里每秒都在滚战斗行 —— 和野怪掉落一个颜色的话，
+  玩家翻回去根本找不到"我刚拿了什么"。所以这里用金色块 + 左侧高亮条 + 略大字号，
+  一眼就能在滚动条里挑出来。
+*/
+.log-line.fever-treasure-title {
+  margin-top: 8px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, rgba(255, 206, 84, 0.28), rgba(255, 206, 84, 0.04));
+  border-left: 3px solid #ffcf5c;
+  color: #ffe9a8;
+  font-weight: 800;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  text-shadow: 0 0 10px rgba(255, 206, 84, 0.45);
+}
+
+.log-line.fever-treasure {
+  padding: 2px 8px 2px 11px;
+  color: #ffe08a;
+  font-weight: 700;
+  background: rgba(255, 206, 84, 0.07);
+  border-left: 3px solid rgba(255, 206, 84, 0.55);
+}
+
+.log-trait-carrier {
+  color: #8fe3c2;
+  font-weight: 700;
+}
+
+/* ---------------- 视角缩放徽标 ---------------- */
+
+.zoom-hint {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  padding: 1px 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.zoom-hint:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.13);
+}
+
+/* 拉近之后高亮一下，提醒"现在拖动会平移视角" */
+.zoom-hint.zoomed {
+  color: #ffd76a;
+  border-color: rgba(255, 215, 106, 0.5);
+  background: rgba(255, 215, 106, 0.12);
+}
+
+/* ---------------- 羁绊详情（进行时） ---------------- */
+.trait-live {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.trait-live-empty {
+  color: #5f6d94;
+  font-size: 11px;
+}
+
+.trait-live-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.trait-live-name {
+  color: #d8c07a;
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+
+.trait-live-unit {
+  color: var(--text-dim);
+  flex: 0 0 auto;
+  max-width: 62px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 进度条：攒满就是"下一次发动" */
+.trait-bar {
+  position: relative;
+  flex: 1 1 auto;
+  height: 6px;
+  min-width: 40px;
+  background: rgba(255, 255, 255, 0.09);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.trait-bar-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, #c8a24a, #ffd76a);
+  transition: width 0.12s linear;
+}
+
+.trait-live-value {
+  flex: 0 0 auto;
+  color: #ffd76a;
+}
+
+.trait-log {
+  margin-top: 6px;
+  max-height: 96px;
+  overflow-y: auto;
+  font-size: 11px;
+  line-height: 1.6;
+  font-family: 'Cascadia Code', 'Consolas', monospace;
+}
+
+/* ---------------- 联机面板 ---------------- */
+
+.net-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.net-input {
+  flex: 1;
+  min-width: 0;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 6px 9px;
+  border-radius: 8px;
+  border: 1px solid var(--panel-border);
+  background: rgba(10, 14, 26, 0.85);
+  color: var(--text);
+  outline: none;
+}
+
+.net-input:focus {
+  border-color: var(--accent);
+}
+
+.net-status {
+  font-size: 10.5px;
+  color: var(--text-dim);
+  line-height: 1.5;
+  word-break: break-all;
+  margin-top: 4px;
+}
+
+.net-status.online {
+  color: var(--success);
+}
+
+.net-status.error {
+  color: var(--danger);
+}
+
+.net-hint {
+  font-size: 10px;
+  color: var(--text-dim);
+  line-height: 1.5;
+  margin: 3px 0 7px;
+}
+
+.room-code-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 9px;
+  background: rgba(10, 14, 26, 0.85);
+  border: 1px solid var(--accent);
+  border-radius: 9px;
+}
+
+.room-code-label {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.room-code {
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  color: var(--accent-strong);
+}
+
+.net-players,
+.lobby-players {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 7px 0;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.net-player {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  padding: 4px 7px;
+  background: rgba(38, 46, 72, 0.55);
+  border-radius: 7px;
+}
+
+.net-player.me {
+  border: 1px solid var(--accent);
+}
+
+.net-player.dead {
+  opacity: 0.42;
+  text-decoration: line-through;
+}
+
+.net-player.offline {
+  opacity: 0.5;
+}
+
+.net-player-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 房间等待界面的头像（0.0.2 需求第 16 条） */
+.net-player-avatar {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.net-player-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.net-badge {
+  font-size: 9px;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: rgba(120, 150, 220, 0.25);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.net-badge.host {
+  background: rgba(255, 215, 94, 0.22);
+  color: var(--gold);
+}
+
+.net-badge.ready {
+  background: rgba(61, 220, 132, 0.22);
+  color: var(--success);
+}
+
+/*
+  ★★ 0.3.3：人机的标识。
+  ★ 用**中性灰**，不用荧光黄绿 —— 按 0.3 的配色规定，`#C9FA43` 只表示
+    "系统高亮 / 可交互"，一个身份标签不属于这一类。也不要用红：
+    人机不是敌人，它只是"不是人"。
+*/
+.net-badge.bot {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+/*
+  ★★ 0.3.3：人机那一行里的难度下拉。
+  ★ 它和隔壁的「改名 / 踢出」按钮同一档视觉重量（11px / 6px 圆角），
+    但宽度固定得小一点 —— 否则"困难"两个字会把整行挤到换行。
+*/
+.net-player-btn.bot-difficulty {
+  padding: 2px 4px;
+  font-size: 10.5px;
+  max-width: 62px;
+  /* 深色主题下原生 <select> 的默认样式是白底黑字，得手动压下去 */
+  background-color: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+}
+
+.net-player-btn.bot-difficulty option {
+  background: #14161a;
+  color: var(--text);
+}
+
+/*
+  ★★ 0.3.3：房主的「添加人机」那一行。
+  ★ 放在玩家列表下面、状态文字上面：读起来是"房间里有谁 -> 再加一个谁"。
+*/
+.lobby-bot-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 2px 0 6px;
+}
+
+.lobby-bot-add .lobby-bot-select {
+  width: auto;
+  min-width: 84px;
+  padding: 4px 8px;
+  font-size: 11.5px;
+  background-color: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+}
+
+.lobby-bot-add .lobby-bot-select option {
+  background: #14161a;
+  color: var(--text);
+}
+
+.lobby-bot-add .ghost-btn {
+  font-size: 11.5px;
+  padding: 4px 12px;
+}
+
+.net-hp {
+  font-size: 10px;
+  color: var(--text-dim);
+  min-width: 28px;
+  text-align: right;
+}
+
+.ghost-btn.danger {
+  border-color: rgba(255, 90, 90, 0.5);
+  color: #ffb4b4;
+}
+
+/* ---------------- 底部：商店 / 备战席 / 等级 ---------------- */
+
+#dock {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--dock-h);
+  display: grid;
+  /*
+    三列：金币+等级 / 商店 / 备战席。
+    备战席恢复成 232px —— 之前为了塞下 5 张大竖卡压到 185px，
+    结果 5 列挤在 185px 里每格只有 34px，太窄了。
+    现在卡片改成横向布局、底栏矮了，宽度也就够用了。
+  */
+  grid-template-columns: 190px minmax(380px, 1fr) 232px;
+  gap: 10px;
+  padding: 10px;
+  background: linear-gradient(0deg, rgba(9, 11, 20, 0.99), rgba(9, 11, 20, 0.86));
+  border-top: 1px solid var(--panel-border);
+  backdrop-filter: blur(12px);
+  z-index: 22;
+}
+
+/* --- 金币（放在等级上方） --- */
+
+.gold-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+  padding: 5px 10px;
+  border-radius: 9px;
+  background: linear-gradient(90deg, rgba(255, 215, 94, 0.14), rgba(255, 215, 94, 0.02));
+  border: 1px solid rgba(255, 215, 94, 0.28);
+}
+
+/*
+  连胜 / 连败徽章：紧挨着金币。
+  【为什么要放在这里？】
+  因为它直接决定"这回合我能拿多少钱" —— 玩家看到"3 连败 +2"就明白
+  下一回合的钱够买个 2 费，可以据此决定要不要梭哈。
+  藏在别的地方等于没有。
+*/
+.streak-badge {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  margin-left: 2px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* 连胜：暖金色 */
+.streak-badge.win {
+  background: rgba(255, 215, 94, 0.18);
+  border: 1px solid rgba(255, 215, 94, 0.55);
+  color: #ffd75e;
+}
+
+/* 连败：冷蓝色（是补偿，不是坏事） */
+.streak-badge.loss {
+  background: rgba(110, 190, 255, 0.14);
+  border: 1px solid rgba(110, 190, 255, 0.5);
+  color: #9fd0ff;
+}
+
+.streak-badge .streak-gold {
+  opacity: 0.8;
+  font-weight: 400;
+}
+
+.gold-label {
+  font-size: 11px;
+  color: var(--text-dim);  letter-spacing: 0.08em;
+}
+
+.gold-value {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--gold);
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 14px rgba(255, 215, 94, 0.45);
+  line-height: 1.1;
+}
+
+/* 测试模式下金币显示 ∞，用紫色区分，避免和真实金币混淆 */
+.gold-value.testmode {
+  color: #b28cff;
+  text-shadow: 0 0 16px rgba(178, 140, 255, 0.65);
+}
+
+/* --- 锁定按钮 --- */
+
+.lock-btn {
+  min-width: 96px;
+}
+
+/* 已锁定时高亮成金色，一眼看出商店被保住了 */
+.lock-btn.locked {
+  background: linear-gradient(180deg, #b8860b, #8a6508);
+  border-color: var(--gold);
+  color: #fff8dc;
+  font-weight: 700;
+  box-shadow: 0 0 14px rgba(255, 215, 94, 0.45);
+}
+
+.dock-left,
+.dock-center,
+.dock-right {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* --- 等级与经验 --- */
+
+.level-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.level-badge {
+  font-size: 14px;
+  font-weight: 800;
+  color: #fff;
+  background: linear-gradient(180deg, #3f86e8, #1f4e9c);
+  border-radius: 8px;
+  padding: 4px 9px;
+  white-space: nowrap;
+}
+
+.xp-track {
+  flex: 1;
+  height: 9px;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.xp-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #6fb6ff, #b28cff);
+  transition: width 0.2s ease-out;
+}
+
+.xp-text {
+  font-size: 11px;
+  color: var(--text-dim);
+  min-width: 40px;
+  text-align: right;
+}
+
+.dock-btn-row {
+  display: flex;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.dock-hint {
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-top: 7px;
+}
+
+/* --- 商店 --- */
+
+.shop-header,
+.bench-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 7px;
+}
+
+.shop-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--accent-strong);
+}
+
+.shop-odds,
+.bench-hint {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.shop-slots {
+  display: flex;
+  flex-direction: row;
+  gap: 7px;
+  flex: 1;
+  min-height: 0;
+  /* 卡片用自适应宽度（见 .shop-slot），窄屏时横向滚动而不是压扁卡片。
+     为什么要留滚动？因为头像放大后卡片有最小可用宽度，
+     再窄下去文字就看不清了，不如滚动。 */
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 2px;
+}
+
+/* 商店卡片：自适应宽度 + 竖排布局。头像占上半部分，名字和特质在下方 */
+/* 商店卡片：横向布局 —— 头像在左、信息在右，卡片矮而宽 */
+.shop-slot {
+  /*
+    卡片宽度：自适应，有下限和上限。
+      · flex 1 1 190px -> 空间够就长胖，不够就缩到 190px
+      · max-width 300px -> 超宽屏上不会胖到难看
+  */
+  flex: 1 1 190px;
+  min-width: 190px;
+  max-width: 300px;
+  position: relative;
+  /*
+    横向布局：头像在左、文字在右。
+    为什么不用「大竖卡」？因为竖卡要 226px 高，底栏就得 350px ——
+    那样 768 高的屏幕上战场只剩 366px，而且备战席被挤到每格 34px。
+    横向卡片只要约 96px 高，底栏 232px 就够，战场和备战席都宽松。
+  */
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  /*
+    边框加粗到 3px，是为了让稀有度颜色真正「看得见」。
+    之前只有 2px，在深色卡片底色上几乎被淹没 —— 这是用户反馈的问题。
+  */
+  border: 3px solid transparent;
+  background: linear-gradient(135deg, rgba(38, 48, 76, 0.6), rgba(16, 21, 36, 0.96));
+  cursor: pointer;
+  overflow: hidden;
+  transition: transform 0.1s, box-shadow 0.15s, filter 0.15s;
+}
+
+/* 卡片右侧的文字区：名字 + 特质 */
+.shop-slot-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.shop-slot:hover {
+  transform: translateY(-3px);
+  /* 注意：不在这里改 border-color —— 边框颜色由稀有度决定，
+     写在这里会盖掉内联样式（之前就是这个问题） */
+  filter: brightness(1.18);
+}
+
+.shop-slot.unaffordable {
+  /* 买不起时不变灰太多 —— 否则稀有度颜色看不出来。
+     改用「去掉饱和 + 略暗」表示买不起，但仍能看出稀有度 */
+  filter: saturate(0.35) brightness(0.72);
+  cursor: not-allowed;
+}
+
+.shop-slot.unaffordable:hover {
+  transform: none;
+  filter: saturate(0.35) brightness(0.72);
+}
+
+.shop-slot.empty {
+  background: rgba(20, 26, 44, 0.5);
+  border: 3px dashed rgba(120, 150, 220, 0.18);
+  cursor: default;
+}
+
+.shop-slot.empty:hover {
+  transform: none;
+  filter: none;
+}
+
+/*
+  干员头像：卡片左侧的方块。
+
+  【尺寸是怎么定的】
+  横排布局下，头像高度基本决定了卡片高度。
+  取 76px：卡片总高约 96px（底栏 232px 装得下），
+  同时 76px 的方块在卡片里足够显眼。
+
+  之前试过「竖排大卡 + 160px 头像」，卡片要 226px 高、底栏要 350px，
+  把战场和备战席都挤掉了（用户反馈）—— 所以退回横排。
+
+  现在是占位图案；把立绘放进 apps/web/public/assets/units/ 就会自动换成真图。
+*/
+.shop-portrait-box {
+  position: relative;
+  flex: 0 0 76px;
+  width: 76px;
+  height: 76px;
+  border-radius: 8px;
+  overflow: hidden;
+  /* 底色用棋子主色，压得很低，只作为辨识辅助 */
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+}
+
+/* 没有真实头像时显示的占位图案：对角斜纹，一眼看出是"空位" */
+.shop-portrait-box::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(255, 255, 255, 0.1) 0px,
+    rgba(255, 255, 255, 0.1) 4px,
+    transparent 4px,
+    transparent 8px
+  );
+}
+
+/* 有真实头像时，隐藏占位斜纹 */
+.shop-portrait-box.has-image::after {
+  display: none;
+}
+
+.shop-portrait-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* 费用徽章：左上角 */
+.shop-cost-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  font-size: 12px;
+  font-weight: 800;
+  color: #0b0d17;
+  border-radius: 6px;
+  padding: 1px 6px;
+  z-index: 2;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+}
+
+/*
+  ★ 0.1.1 藏品二版：价格被藏品改过的角标（«剑锤» 装载后买干员 +2）。
+  ============================================================
+  角标里显示的是**实际价格**（4），后面挂一个小号的 +2 说明差价。
+  为什么要写出来：不写的话，玩家会以为"这游戏算错了钱"
+  （他记得这张卡本来是 2 费，现在要 4 金）。
+  用红色警示边框而不是换底色 —— 底色已经被稀有度占用了。
+*/
+.shop-cost-badge.modified {
+  border: 1px solid #ff9d2e;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.6), 0 0 8px rgba(255, 157, 46, 0.7);
+}
+
+.shop-cost-delta {
+  margin-left: 3px;
+  font-size: 9.5px;
+  font-weight: 800;
+  color: #ffb545;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+}
+
+.shop-slot-name {
+  position: relative;
+  /* 名字调大：用户反馈「卡面太空了」 */
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  /* 名字压在头像下沿上方，加双层阴影保证在头像上也看得清 */
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.95), 0 0 10px rgba(0, 0, 0, 0.9);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  z-index: 2;
+}
+
+.shop-slot-traits {
+  position: relative;
+  /* 特质也调大，配合放大的名字，让卡面不那么空 */
+  font-size: 12px;
+  color: rgba(232, 237, 248, 0.82);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95), 0 0 8px rgba(0, 0, 0, 0.85);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* 稀有度色条：贴在卡片底边，是第二个「一眼看出几费」的提示 */
+.shop-slot-rarity {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  z-index: 2;
+  /* 让色条顺着卡片圆角 */
+  border-bottom-left-radius: 8px;
+  border-bottom-right-radius: 8px;
+}
+
+/* --- 备战席 --- */
+
+.bench-slots {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+  gap: 6px;
+  flex: 1;
+  min-height: 0;
+}
+
+.bench-slot {
+  position: relative;
+  border-radius: 8px;
+  /*
+    稀有度边框用 outline 而不是 border —— 两个原因：
+      1. outline 不占布局空间，卡面尺寸不会因为边框变化而抖动
+      2. 用负的 outline-offset 让它内缩，绕开父容器的 overflow: hidden 裁剪
+         （border 会被裁掉外侧，outline 内缩后不会被裁）
+    颜色由 main.ts 按稀有度写进内联样式（见 shared/rarity.ts）。
+  */
+  outline: 3px solid transparent;
+  outline-offset: -3px;
+  background: rgba(20, 26, 44, 0.8);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 4px 5px;
+  overflow: hidden;
+  transition: transform 0.1s, filter 0.15s, box-shadow 0.15s;
+}
+
+.bench-slot:hover {
+  transform: translateY(-2px);
+  /* 不在这里改 outline-color —— 那会盖掉稀有度颜色（商店卡片踩过这个坑）。
+     改用亮度变化表达悬停 */
+  filter: brightness(1.25);
+}
+
+/*
+  选中状态：用金色发光环表达，而不是改边框颜色。
+  这样「稀有度颜色」和「被选中」两件事可以同时看见 ——
+  如果选中时把 outline 改成金色，稀有度信息就丢了。
+*/
+.bench-slot.selected {
+  box-shadow: 0 0 14px rgba(255, 215, 94, 0.55), inset 0 0 12px rgba(255, 215, 94, 0.25);
+}
+
+.bench-slot.selected::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+  border: 2px solid var(--gold);
+  pointer-events: none;
+  z-index: 3;
+}
+
+.bench-slot.empty {
+  cursor: default;
+  background: rgba(20, 26, 44, 0.42);
+}
+
+.bench-slot.empty:hover {
+  transform: none;
+  filter: none;
+}
+
+/*
+  拖动时鼠标正悬停的那一格（0.0.2 需求第 10 条：备战席自由换位）。
+  备战席格子很小，光靠鼠标位置看不出"到底落在哪一格"，
+  所以给落点一个明确的光环 —— 和棋盘格子的高亮是同一套语义。
+  用 outline 而不是 border：格子尺寸固定不跳，也不会被裁掉。
+*/
+.bench-slot.drop-target {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  box-shadow: 0 0 14px rgba(74, 158, 255, 0.6);
+  background: rgba(74, 158, 255, 0.18);
+}
+
+.bench-slot.empty.drop-target {
+  background: rgba(74, 158, 255, 0.22);
+}
+
+/* 稀有度角标：备战席格子小，再加一个方块提示更好认 */
+.bench-rarity-dot {
+  position: absolute;
+  top: 3px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 2px;
+  z-index: 2;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+}
+
+.bench-name {
+  font-size: 10.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+.bench-stars {
+  font-size: 9px;
+  color: var(--gold);
+  line-height: 1;
+}
+
+/* --- 拖动预览（跟着鼠标跑的小卡片） --- */
+
+.drag-ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 999;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 11px 6px 7px;
+  border-radius: 10px;
+  background: rgba(24, 32, 54, 0.94);
+  border: 1px solid var(--accent);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55), 0 0 16px rgba(74, 158, 255, 0.35);
+  pointer-events: none; /* 不能让预览挡住鼠标，否则拿不到落点 */
+  white-space: nowrap;
+}
+
+.drag-ghost-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.drag-ghost-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+/* 拖动时禁止选中文字，避免拖出一片蓝色 */
+body.dragging,
+body.dragging * {
+  cursor: grabbing !important;
+  user-select: none !important;
+}
+
+/* ============================================================
+   主界面 / 房间等待界面
+   ============================================================ */
+
+.menu-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  /* 半透明深色玻璃：能隐约看到背后的星空，又有足够的可读性 */
+  background: radial-gradient(120% 90% at 50% 20%, rgba(20, 28, 52, 0.86), rgba(5, 7, 14, 0.95));
+  backdrop-filter: blur(10px);
+  padding: 24px;
+  overflow-y: auto;
+}
+
+.menu-title {
+  font-size: 52px;
+  font-weight: 900;
+  letter-spacing: 0.26em;
+  /* 渐变文字 + 外发光，比纯色标题有质感 */
+  background: linear-gradient(180deg, #ffffff, #7fb8ff 60%, #4a7fd0);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 0 26px rgba(74, 158, 255, 0.55));
+  text-align: center;
+}
+
+.menu-title.small {
+  font-size: 28px;
+  letter-spacing: 0.2em;
+}
+
+.menu-subtitle {
+  font-size: 13px;
+  letter-spacing: 0.3em;
+  color: var(--text-dim);
+  margin-bottom: 26px;
+}
+
+/*
+  主界面的骨架（★★ 0.3.3 重排）
+  ============================================================
+  【为什么从"左右两栏"改回"单列"？】
+  0.0.2 时头像选择是常驻的一大块，只能左右分栏放。0.3.3 把它改成**隐藏式浮层**
+  之后，主界面就没有第二块常驻内容了 —— 再留着右栏只会得到一片空白。
+  现在是纵向三段：标题区 → 按钮区 → 底部工具条（头像 / 设置 / 退出）。
+  宽度给足，但**眼睛的落点是中间那条竖线**，和方舟主界面的观感一致。
+*/
+#main-menu {
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+}
+
+/*
+  左栏（标题 / 按钮 / 面板 / 工具条）现在是**唯一的一栏**。
+  `flex: none` 保留：`#main-menu` 是 flex 容器且 `justify-content: center`，
+  不加它的话内容少时会被拉伸，标题和按钮之间的间距会随窗口高度变来变去。
+*/
+.menu-main {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: min(560px, 94vw);
+}
+
+/* 标题区：眉标 → 主标题 → 副标题（★ 0.3.3 新增眉标，给下面那截荧光线找承接） */
+.menu-heading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.menu-kicker {
+  font-size: 10px;
+  letter-spacing: 0.42em;
+  color: var(--text-dim);
+  opacity: 0.75;
+  text-transform: uppercase;
+  /* 字距加在最后一位后面，视觉上会右偏 —— 用负 margin 拉回来 */
+  margin-right: -0.42em;
+}
+
+/*
+  主界面的头像选择器 —— ★★ 0.3.3 改成**隐藏式浮层**（用户口径）。
+  ============================================================
+  【以前是什么样？】
+  0.0.2 ~ 0.3.2 它是主界面右侧一整块常驻面板（440px 宽 + 头像墙）：
+      · 主界面永远是"左边几个按钮、右边一大片格子"，视觉重心全在选头像上；
+      · 玩家进游戏 99% 的时间根本不看它，却一直占着半屏。
+
+  【现在是什么样？】
+  外层 `#avatar-picker` = **全屏遮罩**（fixed + 半透黑），点它自己就关；
+  内层 `.avatar-card` = 真正那块面板（居中、有边框、限宽限高）。
+  `.hidden` 一加就整块消失 —— 主界面只剩标题 / 按钮 / 工具条三块。
+
+  ★ 为什么遮罩和面板做成父子，而不是两个兄弟节点？
+    父子关系下"点空白处关闭"只需要一句 `event.target === 遮罩`，
+    不用再维护第二份"谁在谁上面"的层级。
+  ★ 为什么 z-index 是 300 而不是 100？
+    `.menu-overlay` 是 100、音乐浮球/控制台是 200；浮层要压在主界面**和**音乐球之上
+    （不然那颗球会浮在遮罩上面，看着像没关干净），但仍在 toast(900) 之下。
+*/
+.avatar-picker {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(4, 5, 7, 0.74);
+}
+
+.avatar-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(720px, 94vw);
+  max-height: min(86vh, 820px);
+  padding: 18px 20px;
+  border-radius: var(--radius);
+  background: var(--panel-solid);
+  border: 1px solid var(--panel-border);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.72);
+}
+
+.avatar-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.avatar-card-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.avatar-picker-sub {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+
+.avatar-card-tools {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* 关闭按钮：和音乐/修改器面板那个 ✕ 同一档视觉重量 */
+.avatar-close-btn {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1;
+  font-family: inherit;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.avatar-close-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.avatar-picker-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text);
+}
+
+.avatar-picker-name {
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 预览框 + 当前头像名字并排（★ 0.3.3：这一条现在是"当前选择"的信息条） */
+.avatar-picker-body {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* 这一小栏的写法和对局里的 .stat-label 一致：小号 + 大字距 + 灰 */
+.avatar-picker-label {
+  font-size: 9.5px;
+  letter-spacing: 0.22em;
+  color: var(--text-dim);
+}
+
+.avatar-picker-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+/*
+  当前头像的大预览。
+  【为什么要它？】
+  以前只有一行小字"未选择"，选完也看不出自己到底点中了谁 ——
+  这个方框实时显示当前选用的头像（没选就是一句提示），一眼就知道状态。
+*/
+.avatar-picker-preview {
+  flex: none;
+  width: 96px;
+  height: 96px;
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(120, 150, 220, 0.35);
+}
+
+.avatar-picker-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.avatar-picker-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.9;
+}
+
+/*
+  头像墙。
+  `flex: 1` + `min-height` 让它吃掉面板剩下的高度，并且**永远不会被压扁**；
+  溢出就在自己内部滚动（不是把整个面板撑高）。
+*/
+.avatar-grid {
+  flex: 1;
+  min-height: 240px;
+  /*
+    ★★ 0.3.0 修（用户报的"头像上下间距太小、互相重叠"）：
+    这里原来用的是 CSS Grid + `.avatar-option { aspect-ratio: 1 }`。
+    【为什么会重叠？】
+    网格的行高是按"内容高度"算的，而 `aspect-ratio` 只是**首选**尺寸 ——
+    浏览器把行高算成了 29px，可头像本身按宽度撑到了 62px，
+    于是每一行都往下一行里压了 17px（实测：行距 45px、头像高 62px）。
+    【为什么改成 flex？】
+    flex + 固定尺寸的头像不依赖"行高怎么算"，间距就是 `gap` 本身，
+    不可能再出现"内容比行高"的情况。想调间距只改 `gap` 一个数。
+  */
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  /* ★ 用户口径：上下间距要拉开 —— 18px 比原来的 16px 更松，且不会再重叠 */
+  gap: 18px;
+  overflow-y: auto;
+  padding: 14px;
+  border-radius: 12px;
+  background: rgba(16, 22, 38, 0.6);
+  border: 1px solid var(--panel-border);
+}
+
+/*
+  窄屏（小窗 / 手机）。
+  ★ 0.3.3：头像改成浮层之后这里不用再"退回上下堆叠"了 ——
+  只需要把浮层收窄、把头墙面压矮，让它在一屏里仍然好用。
+*/
+@media (max-width: 760px) {
+  .avatar-card {
+    width: 94vw;
+    max-height: 88vh;
+    padding: 14px;
+  }
+
+  .avatar-grid {
+    min-height: 180px;
+    max-height: 46vh;
+  }
+
+  /* 标题在小窗上别顶到边 */
+  .menu-title {
+    font-size: 40px;
+  }
+}
+
+.avatar-option {
+  position: relative;
+  /* ★ 0.3.0：固定正方形（flex 布局下不再依赖 aspect-ratio / 行高计算） */
+  flex: none;
+  width: 60px;
+  height: 60px;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color 0.12s, transform 0.12s, box-shadow 0.12s;
+}
+
+.avatar-option:hover {
+  transform: translateY(-1px);
+  border-color: var(--accent);
+}
+
+/* 选中的那个：主色描边 + 外发光，一眼能看出"现在用的是这个" */
+.avatar-option.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(74, 158, 255, 0.55), 0 0 14px rgba(74, 158, 255, 0.5);
+}
+
+.avatar-option-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* 没有立绘的干员：用干员主色填一个色块（和商店卡片同一套降级思路） */
+.avatar-option-fallback {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.menu-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+  text-align: center;
+  line-height: 1.7;
+  max-width: 420px;
+}
+
+/*
+  主按钮区（★ 0.3.3 重排：不再四颗一样大的竖排）
+  ============================================================
+  现在的层级：
+      「单人游戏」  通栏、最重（这是 90% 玩家唯一会点的）
+      「创建房间 / 加入房间」 并排两列（联机是一类事，放一起）
+      「测试模式」  最下一行、小一号、灰（工具入口，不该和玩法抢视线）
+*/
+.menu-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(360px, 88vw);
+}
+
+/* 两颗联机入口并排 */
+.menu-btn-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+/* 工具入口：比玩法按钮矮一档、暗一档 */
+.menu-btn-quiet {
+  font-size: 12.5px;
+  padding: 9px 16px;
+  opacity: 0.78;
+}
+.menu-btn-quiet:hover {
+  opacity: 1;
+}
+
+.menu-btn {
+  font-size: 15px;
+  padding: 13px 22px;
+  border-radius: 12px;
+  text-align: center;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+/* 主操作（单人游戏）单独做得更醒目 */
+#menu-solo {
+  font-size: 17px;
+  padding: 15px 22px;
+}
+
+.menu-panel {
+  width: min(360px, 90vw);
+  padding: 18px 20px;
+  background: rgba(18, 22, 38, 0.94);
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.menu-panel-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--accent-strong);
+  letter-spacing: 0.1em;
+}
+
+/* ★ 0.3：昵称规则提示（2-8 个字 + 字符白名单）。小一号、灰一档，不抢标题 */
+.menu-panel-hint {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  margin-top: -6px;
+}
+
+.menu-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.menu-field > span {
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.menu-panel-buttons {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+/*
+  ★ 0.3.4 自定义快捷键（设置面板里那一块）
+  ------------------------------------------------------------
+  一行 = 动作名 + 说明 + 当前按键。按下去 = 进入"等你按键"状态，
+  所以按钮要有一个明确的待命态（.capturing）—— 不然玩家不知道轮到他按了。
+*/
+.menu-panel-subtitle {
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-strong);
+  letter-spacing: 0.12em;
+}
+
+.keybind-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.keybind-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 8px;
+  border: 1px solid var(--panel-border, rgba(120, 150, 220, 0.18));
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.keybind-label {
+  font-size: 11.5px;
+  color: var(--text);
+  min-width: 82px;
+}
+
+.keybind-hint {
+  flex: 1;
+  min-width: 0;
+  font-size: 10.5px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.keybind-btn {
+  flex: none;
+  min-width: 74px;
+  padding: 4px 10px;
+  font-family: var(--mono, monospace);
+  font-size: 11.5px;
+  color: var(--text);
+  background: #1e2634;
+  border: 1px solid #2c3648;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: 0.12s;
+}
+
+.keybind-btn:hover {
+  border-color: var(--accent, #c9a24a);
+}
+
+/* 「等你按键」的待命态：荧光高亮 + 呼吸，一眼看出轮到你了 */
+.keybind-btn.capturing {
+  color: #10140f;
+  background: #c9fa43;
+  border-color: #c9fa43;
+  animation: keybind-pulse 1s ease-in-out infinite;
+}
+
+@keyframes keybind-pulse {
+  0%, 100% { box-shadow: 0 0 0 rgba(201, 250, 67, 0.0); }
+  50% { box-shadow: 0 0 10px rgba(201, 250, 67, 0.55); }
+}
+
+.keybind-reset {
+  align-self: flex-start;
+  font-size: 11px;
+  padding: 4px 10px;
+}
+
+/*
+  ★★ 0.3.3 主界面底部工具条（用户口径：设置 / 退出游戏重新排版）
+  ============================================================
+  【以前是什么样？】
+  「设置」和「退出游戏」是主标题下面两行**下划线小字**，挤在按钮列的最下方。
+  两个问题：下划线文字看着像网页页脚、点击热区只有那十个字；
+  而且它们和上面那颗「单人游戏」在同一个视觉层级里，容易点歪（退出会关掉后台）。
+
+  【现在是什么样？】
+  一条独立工具条，和主按钮列之间用 1px 分隔线切开：
+      左：头像（当前头像小图 + 名字 + 「更换」）—— 点开隐藏式头像面板
+      右：设置 / 退出游戏（退出仍只在启动器打开时出现）
+  尺寸都压在"工具"这一档（11.5px、矮按钮、灰字），不再和玩法按钮抢视线。
+*/
+.menu-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-top: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--panel-border);
+}
+
+/* 竖分隔线：把"头像"和"设置/退出"分成两组 */
+.menu-toolbar-sep {
+  flex: none;
+  width: 1px;
+  height: 22px;
+  background: var(--panel-border);
+}
+
+/* 头像块：小头像 + 上下两行字 + 右侧「更换」 */
+.menu-avatar-chip {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  font-family: inherit;
+  text-align: left;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.menu-avatar-chip:hover {
+  border-color: var(--accent);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.menu-avatar-box {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+}
+.menu-avatar-box img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+/* 有头像时描边跟着亮一档 —— 空框只是一个占位 */
+.menu-avatar-box.has-avatar {
+  border-color: var(--accent);
+}
+
+.menu-avatar-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.menu-avatar-label {
+  font-size: 9.5px;
+  letter-spacing: 0.22em;
+  color: var(--text-dim);
+}
+
+.menu-avatar-value {
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.menu-avatar-edit {
+  flex: none;
+  margin-left: auto;
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+}
+.menu-avatar-chip:hover .menu-avatar-edit {
+  color: var(--accent);
+}
+
+/* 工具按钮：设置 / 退出游戏 */
+.menu-tool-btn {
+  flex: none;
+  padding: 7px 13px;
+  font-family: inherit;
+  font-size: 11.5px;
+  letter-spacing: 0.14em;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+.menu-tool-btn:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+
+/*
+  退出是"关掉整个程序"，比设置重，但又不该抢主按钮的视线 —— 用警示红压一档。
+  ★ 红只给"警示/敌对"（0.3 配色口径），这里正是它该出现的地方。
+*/
+#menu-quit.danger,
+.menu-tool-btn.danger {
+  color: var(--danger);
+  border-color: rgba(255, 90, 90, 0.42);
+}
+.menu-tool-btn.danger:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: rgba(255, 90, 90, 0.08);
+}
+
+.menu-status {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  text-align: center;
+  line-height: 1.6;
+  max-width: 420px;
+  word-break: break-all;
+}
+
+.menu-status.online {
+  color: var(--success);
+}
+
+.menu-status.error {
+  color: var(--danger);
+}
+
+/* 房间码：大号等宽字，方便照着念 */
+.lobby-code-big {
+  font-size: 44px;
+  font-weight: 900;
+  letter-spacing: 0.24em;
+  color: var(--accent-strong);
+  text-shadow: 0 0 30px rgba(74, 158, 255, 0.6);
+  margin: 6px 0;
+  /* ★ 0.1.3：点一下复制 —— 要让人看得出它可点 */
+  cursor: pointer;
+  border-radius: 10px;
+  padding: 2px 10px;
+  transition:
+    background 0.15s ease,
+    transform 0.1s ease;
+  /*
+    ★★ 0.3 bug：房间号"一点就变蓝"。
+    根因是这里的 `user-select: all` —— 它让**单击**就选中整段文字，
+    浏览器给选中态刷的是系统蓝底，看起来就像"房间号变蓝了"。
+    这个数字的交互是"**点一下 = 复制**"（`copyTextToClipboard` 走的是剪贴板 API，
+    不需要用户先选中），所以直接禁掉选中最干净。
+    ★ 万一复制失败要用户自己抄，toast 里会把号码原样写出来，不依赖选中。
+  */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.lobby-code-big:hover {
+  background: rgba(74, 158, 255, 0.12);
+}
+
+.lobby-code-big:active {
+  transform: scale(0.98);
+}
+
+#lobby-overlay .lobby-players {
+  width: min(400px, 90vw);
+  max-height: 240px;
+}
+
+/*
+  顶部「返回大厅」按钮：放在最左边，做成**红色**。
+  【为什么改成红色？】返回会退出这一局（联机还会退房间），是个不可逆的操作。
+  蓝色在整套 UI 里代表"普通操作"，红色才是"小心，这个回不去"。
+*/
+.back-btn {
+  padding: 7px 13px;
+  font-weight: 700;
+  color: #ff8f8f;
+  border-color: rgba(255, 107, 107, 0.55);
+  background: rgba(120, 24, 24, 0.28);
+}
+
+.back-btn:hover {
+  color: #fff;
+  background: rgba(198, 42, 42, 0.55);
+  border-color: #ff6b6b;
+}
+
+/* 已经准备好时，按钮变成"取消准备"—— 用绿色提示当前状态是"已准备" */
+#btn-lobby-ready.active-ready {
+  color: #6ee7a0;
+  border-color: rgba(110, 231, 160, 0.55);
+  background: rgba(20, 90, 60, 0.28);
+}
+
+#btn-lobby-ready.active-ready:hover {
+  background: rgba(30, 120, 80, 0.45);
+}
+
+/* ============================================================
+   战斗结算横幅（0.3.5 改版：横向通栏）
+   ============================================================
+   【为什么要从"中间那块方卡片"改成通栏】
+   用户口径：要"符合游戏风格"。
+   这个项目的界面语汇是黑 / 灰 / 白 + 一条荧光黄绿（#C9FA43）做系统高亮，
+   红色只给警示与敌对 —— 所以结算不应该是"一整块彩色大圆角卡片"，
+   而是像战术面板上刷过的一条**状态带**：
+     · 通栏、贴边、上下各一条 1 像素细线（不是圆角浮窗）；
+     · 左侧一根竖色条（胜 = 荧光黄绿，败 = 红，平 = 灰），
+       标题用白字，英文副标题做字距拉开的标注；
+     · 右侧是等宽字体的数据（用时 / 剩余血量 / 校验和）——
+       和游戏里其它"系统读数"一个调性。
+     · 从顶部滑入 + 下方一条横线擦出，停留两秒多自动收走，
+       `pointer-events: none` 不挡操作（自走棋一局二三十回合，不能每回合点一下）。
+   ============================================================ */
+
+.result-banner {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 27vh;
+  /*
+    ★ 0.3.5：层级要**高于结算页（300）**。
+    联机打完那一局时，这条横幅是"第一眼那一下"（冠军 / 第 N 名），
+    它必须盖在战绩页上才看得见；`pointer-events: none` 保证它只是盖着、不挡点击。
+  */
+  z-index: 320;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 15px 40px 16px 26px;
+  /* 左侧留出竖色条的位置，右边渐隐 —— 不要做成一块"浮起来的卡片" */
+  border-top: 1px solid rgba(255, 255, 255, 0.09);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+  background:
+    linear-gradient(180deg, rgba(10, 13, 20, 0.965) 0%, rgba(8, 10, 16, 0.94) 100%),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.022) 0 1px, transparent 1px 6px);
+  backdrop-filter: blur(3px);
+  pointer-events: none; /* 不能挡住鼠标 —— 横幅还在时玩家要能继续操作 */
+  opacity: 0;
+  transform: translateY(-16px);
+  transition: opacity 0.22s ease-out, transform 0.34s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* 下方那条"擦出来"的细线：从中间往两边展开，是这条横幅的收尾动作 */
+.result-banner::after {
+  content: '';
+  position: absolute;
+  left: 26px;
+  right: 26px;
+  bottom: -1px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, currentColor 12%, currentColor 88%, transparent);
+  opacity: 0.75;
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1) 0.08s;
+}
+
+.result-banner.show {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.result-banner.show::after {
+  transform: scaleX(1);
+}
+
+/* 左侧竖色条 */
+.result-banner-rail {
+  flex: 0 0 auto;
+  width: 3px;
+  height: 46px;
+  border-radius: 1px;
+  background: currentColor;
+  box-shadow: 0 0 14px currentColor;
+  opacity: 0.95;
+}
+
+.result-banner-main {
+  min-width: 0;
+}
+
+.result-banner-title {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  font-size: 30px;
+  font-weight: 900;
+  line-height: 1.05;
+  letter-spacing: 0.16em;
+  color: var(--text);
+}
+
+/* 英文副标题：字距拉开的小号标注（这个项目的"系统标签"就是这个写法） */
+.result-banner-en {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.44em;
+  opacity: 0.5;
+  color: currentColor;
+}
+
+.result-banner-detail {
+  margin-left: auto;
+  flex: 0 1 auto;
+  text-align: right;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.result-banner.win {
+  color: var(--accent, #c9fa43);
+  border-color: rgba(201, 250, 67, 0.18);
+}
+
+.result-banner.win .result-banner-title {
+  color: #f3f7ea;
+  text-shadow: 0 0 22px rgba(201, 250, 67, 0.28);
+}
+
+.result-banner.win .result-banner-en {
+  color: #c9fa43;
+  opacity: 0.72;
+}
+
+.result-banner.lose {
+  color: #ff5252;
+  border-color: rgba(255, 82, 82, 0.2);
+}
+
+.result-banner.lose .result-banner-title {
+  color: #ff5252;
+  text-shadow: 0 0 22px rgba(255, 82, 82, 0.3);
+}
+
+.result-banner.lose .result-banner-en {
+  opacity: 0.7;
+}
+
+.result-banner.draw {
+  color: #9aa6b8;
+  border-color: rgba(154, 166, 184, 0.16);
+}
+
+.result-banner.draw .result-banner-title {
+  color: #dfe6f0;
+}
+
+.result-banner.draw .result-banner-en {
+  opacity: 0.55;
+}
+
+/* ============================================================
+   羁绊详情（内嵌在左侧面板里）
+   ============================================================
+   做成「在左侧面板内展开」而不是弹窗：
+   · 弹窗会盖住棋盘，而羁绊信息本来就是左侧面板的内容
+   · 就地展开不遮挡操作，可以一边看详情一边摆棋子
+   ============================================================ */
+
+.panel-title-hint {
+  font-size: 9px;
+  font-weight: 400;
+  color: var(--text-dim);
+  letter-spacing: 0;
+  margin-left: 4px;
+}
+
+/*
+  羁绊面板标题下面那行小字：「按不同干员计数：同一个干员上多个只算 1 个」。
+  这条规则不写出来玩家一定会误解（买了第二个同名发现数字没变 = 以为坏了），
+  所以给它固定的位置和偏暗的颜色：看得见，但不抢眼。
+*/
+.panel-note {
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  margin: -4px 0 8px;
+}
+
+.panel-note strong {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.detail-back {
+  /*
+    ★ 返回键「置顶常显」（0.0.2 追加需求）。
+    #traits 整体是可滚动的（max-height + overflow-y:auto），
+    详情页内容一长，返回键就被滚出视野 —— 想回列表只能先把滚动条拉回去，
+    很容易以为界面卡死了。sticky 让它吸附在面板顶端，不管下滑多少都点得到。
+
+    · top: -12px 是**抵消 #traits 那 12px 的内边距**：sticky 的偏移基准是
+      滚动容器的 padding box，不抵消的话按钮吸附时会和面板上沿隔出 12px，
+      滚动内容会从这条缝里露出来。
+    · z-index 保证它压在滚动内容之上。
+    · 背景必须**不透明**：ghost-btn 自己的背景是 0.6 透明度的蓝，
+      不补一层实底的话，下面的文字会从按钮里透出来。
+      做法是先铺 --panel-solid（= --panel 的不透明等价色），再叠 ghost-btn 那层蓝。
+  */
+  position: sticky;
+  top: -12px;
+  z-index: 5;
+  width: 100%;
+  margin-bottom: 9px;
+  padding: 5px 10px;
+  font-size: 11.5px;
+  background:
+    linear-gradient(rgba(40, 50, 80, 0.6), rgba(40, 50, 80, 0.6)),
+    var(--panel-solid);
+}
+
+/* 悬停时同样要保留实底（.ghost-btn:hover 的特异性更高，会被它覆盖） */
+.detail-back:hover {
+  background:
+    linear-gradient(rgba(60, 80, 130, 0.8), rgba(60, 80, 130, 0.8)),
+    var(--panel-solid);
+}
+
+.detail-header {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.detail-name {
+  font-size: 17px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+}
+
+.detail-kind {
+  font-size: 9.5px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(120, 150, 220, 0.22);
+  color: var(--text-dim);
+}
+
+.detail-count {
+  font-size: 11px;
+  color: var(--accent-strong);
+  line-height: 1.6;
+  margin-bottom: 8px;
+}
+
+.detail-section-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--accent-strong);
+  margin: 10px 0 6px;
+}
+
+/*
+  档位：面板只有 190px 宽，所以用「上下堆叠」而不是左右并排 ——
+  左右并排会把描述挤成一条竖线，完全没法读。
+*/
+.detail-tier {
+  padding: 7px 8px;
+  border-radius: 8px;
+  background: rgba(30, 38, 60, 0.6);
+  border-left: 3px solid rgba(120, 150, 220, 0.25);
+  margin-bottom: 5px;
+}
+
+/* 当前生效的档位高亮 */
+.detail-tier.active {
+  background: rgba(48, 90, 155, 0.6);
+  border-left-color: var(--accent-strong);
+}
+
+/* 已满足但被更高档位覆盖的 */
+.detail-tier.passed {
+  border-left-color: rgba(120, 150, 220, 0.5);
+}
+
+.detail-tier-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+
+.detail-tier-count {
+  font-size: 13px;
+  font-weight: 900;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.detail-tier-desc {
+  font-size: 11px;
+  line-height: 1.5;
+  color: rgba(232, 237, 248, 0.9);
+}
+
+/* 从数据算出来的数值，比手写描述更精确 */
+.detail-tier-numbers {
+  font-size: 10.5px;
+  color: var(--success);
+  margin-top: 3px;
+  line-height: 1.4;
+}
+
+.detail-tier-badge {
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.detail-tier-badge.dim {
+  background: rgba(120, 150, 220, 0.2);
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
+/* 拥有这个羁绊的干员：面板窄，做成竖排列表 */
+.detail-units {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.detail-unit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 7px 3px 5px;
+  border-radius: 7px;
+  background: rgba(30, 38, 60, 0.7);
+  border-left: 3px solid transparent;
+  font-size: 11.5px;
+}
+
+.detail-unit-swatch {
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+/* 干员头像缩略图（羁绊详情里的成员列表） */
+.detail-unit-avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  overflow: hidden;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.detail-unit-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* 已经在场上的成员：高亮一下，方便对应「场上几个」 */
+.detail-unit.on-field {
+  background: rgba(90, 140, 220, 0.3);
+}
+
+.detail-unit-onfield {
+  font-size: 9px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--success);
+  color: #0b1220;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.detail-unit-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/*
+  羁绊详情里，每个干员下面挂一行"他自己拥有的羁绊"。
+  当前正在看的那个用实心底色高亮，其余只是描边 —— 一眼分得清主次。
+*/
+.detail-unit-traits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 3px;
+  padding-left: 2px;
+}
+
+.detail-unit-trait {
+  font-size: 9.5px;
+  line-height: 1.5;
+  padding: 0 5px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  color: var(--text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.detail-unit-trait:hover {
+  color: var(--text);
+}
+
+.detail-unit-trait.current {
+  color: #0d1420;
+  font-weight: 700;
+  cursor: default;
+}
+
+/* 羁绊详情里每个干员是一张竖排卡：名字一行，羁绊一行 */
+.detail-unit {
+  flex-wrap: wrap;
+}
+
+.detail-unit-cost {
+  font-size: 10px;
+  color: var(--gold);
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+/* ============================================================
+   干员信息小窗口
+   ============================================================
+   跟着被点的棋子出现，不居中 —— 看信息时眼睛不用离开棋盘。
+   宽度固定 236px，因为有大量数值，太窄会换行换得很难看。
+   ============================================================ */
+
+.unit-info {
+  position: fixed;
+  z-index: 40;
+  width: 236px;
+  padding: 12px 13px 10px;
+  background: rgba(14, 19, 32, 0.97);
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.66);
+  backdrop-filter: blur(12px);
+  font-size: 12px;
+  animation: unit-info-in 0.12s ease-out;
+}
+
+@keyframes unit-info-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ============================================================
+   ★ 0.1.2 测试模式：干员基础属性修改面板
+   ============================================================
+   外观和 #unit-info 同一个"跟着棋子走的小卡片"体系（两块的定位逻辑
+   也是同一套 clamp 算法），但它是**可以输入的**，所以：
+     · 宽一点（要放下"标签 + 输入框"）；
+     · z-index 比 #unit-info 高一点（万一两个同时开着，编辑面板要在上面）。
+   ============================================================ */
+.unit-edit {
+  position: fixed;
+  z-index: 42;
+  width: 262px;
+  padding: 12px 13px 11px;
+  background: rgba(14, 19, 32, 0.97);
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.66);
+  backdrop-filter: blur(12px);
+  font-size: 12px;
+  animation: unit-info-in 0.12s ease-out;
+}
+
+.unit-edit-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  line-height: 1;
+}
+
+.unit-edit-head {
+  padding-right: 24px;
+  margin-bottom: 8px;
+}
+
+.unit-edit-title {
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.unit-edit-sub {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 3px;
+}
+
+.unit-edit-note {
+  font-size: 11px;
+  line-height: 1.65;
+  color: var(--text-dim);
+  background: rgba(74, 158, 255, 0.08);
+  border-left: 2px solid var(--accent);
+  border-radius: 4px;
+  padding: 6px 8px;
+  margin-bottom: 9px;
+}
+
+.unit-edit-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.unit-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.unit-edit-row > span {
+  flex: none;
+  width: 34px;
+  color: var(--text-dim);
+}
+
+.unit-edit-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 7px;
+  background: rgba(8, 11, 20, 0.9);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.unit-edit-row input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.unit-edit-row .unit-edit-unit {
+  flex: none;
+  width: 42px;
+  font-size: 10.5px;
+  color: var(--text-dim);
+}
+
+/* 「改过」的字段标一下 —— 不然下次打开分不清哪些是自己填的 */
+.unit-edit-row.changed > span {
+  color: var(--gold);
+}
+
+.unit-edit-row.changed input {
+  border-color: rgba(255, 215, 94, 0.55);
+}
+
+.unit-edit-error {
+  min-height: 0;
+  font-size: 11px;
+  color: var(--danger);
+  margin-top: 6px;
+}
+
+.unit-edit-error:empty {
+  display: none;
+}
+
+.unit-edit-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.unit-edit-actions .ghost-btn,
+.unit-edit-actions .primary-btn {
+  flex: 1;
+  padding: 5px 4px;
+  font-size: 11.5px;
+}
+
+.unit-info-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  line-height: 1;
+  font-size: 11px;
+  border-radius: 6px;
+}
+
+.unit-info-head {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  margin-bottom: 9px;
+}
+
+.unit-info-portrait {
+  width: 46px;
+  height: 46px;
+  border-radius: 9px;
+  overflow: hidden;
+  border: 2px solid transparent;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.unit-info-portrait img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.unit-info-portrait-fallback {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.unit-info-title {
+  min-width: 0;
+}
+
+.unit-info-name {
+  font-size: 16px;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+}
+
+.unit-info-sub {
+  font-size: 10.5px;
+  color: var(--text-dim);
+  margin-top: 3px;
+}
+
+.unit-info-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px 6px;
+  padding: 7px 8px;
+  border-radius: 9px;
+  background: rgba(30, 38, 60, 0.62);
+  font-size: 10.5px;
+  color: var(--text-dim);
+}
+
+.unit-info-stats strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+  ★ 0.0.3：数值被羁绊/藏品/战斗增益改过时的小注脚。
+  占满一整行（3 列网格），说明 ▲/▼ 是相对"干员自身白板"的。
+*/
+.unit-info-stats-note {
+  grid-column: 1 / -1;
+  font-size: 9.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  border-top: 1px dashed rgba(255, 255, 255, 0.12);
+  padding-top: 4px;
+  margin-top: 2px;
+}
+
+.unit-info-section {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--accent-strong);
+  margin: 9px 0 5px;
+}
+
+/*
+  ============================================================
+   技能条（战斗时显示技能回复 / 冷却）
+  ============================================================
+  法力满了就放技能、放完清零 —— 所以这条其实就是"技能 CD 条"。
+  颜色分三档：攒蓝（青）、快满（金）、刚放完（灰 = 冷却中）。
+*/
+.unit-info-manabar {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 6px;
+}
+
+.manabar-track {
+  position: relative;
+  height: 18px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(120, 180, 240, 0.3);
+  overflow: hidden;
+}
+
+.manabar-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 5px;
+  background: linear-gradient(90deg, #2f8fd6, #6fd6ff);
+  transition: width 0.08s linear, background 0.15s;
+}
+
+/* 快满了：变成金色，一眼看出"马上要放技能了" */
+.manabar-fill.ready {
+  background: linear-gradient(90deg, #d8a319, #ffd75e);
+}
+
+/* 刚放完技能：整条变暗，配合"冷却中"文字 */
+.manabar-fill.cooling {
+  background: linear-gradient(90deg, #4a5568, #6b7a90);
+}
+
+.manabar-text {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #eaf4ff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+  font-variant-numeric: tabular-nums;
+}
+
+.manabar-state {
+  font-size: 10px;
+  color: var(--text-dim);
+  text-align: center;
+}
+
+.manabar-state.ready {
+  color: #ffd75e;
+  font-weight: 700;
+}
+
+/* 战斗中的血量显示（面板里的实时血量） */
+.unit-info-livehp {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 11px;
+}
+
+.unit-info-livehp-track {
+  flex: 1;
+  height: 12px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(0, 0, 0, 0.7);
+  overflow: hidden;
+}
+
+.unit-info-livehp-fill {
+  height: 100%;
+  width: 100%;
+  border-radius: 3px;
+  background: #3ddc84;
+}
+
+.unit-info-livehp-fill.enemy {
+  background: #ff5a5a;
+}
+
+/*
+  血条上叠的那一小段青色 = 护盾。
+  用绝对定位盖在血条右侧区域：它表示"血条之外还能扛多少"。
+*/
+.unit-info-livehp-shield {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, rgba(74, 217, 255, 0.5), rgba(150, 240, 255, 0.75));
+  border-right: 2px solid #7fe6ff;
+}
+
+.unit-info-livehp-track {
+  position: relative;
+}
+
+.unit-info-traits {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.unit-info-trait {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 7px;
+  border-radius: 6px;
+  border-left: 3px solid transparent;
+  background: rgba(30, 38, 60, 0.7);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.unit-info-trait:hover {
+  background: rgba(60, 80, 130, 0.7);
+}
+
+/* 已生效的羁绊：整行亮一点，和左侧面板的口径一致 */
+.unit-info-trait.active {
+  background: rgba(70, 105, 175, 0.55);
+}
+
+.unit-info-trait-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.unit-info-trait-progress {
+  font-size: 10px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.unit-info-trait.active .unit-info-trait-progress {
+  color: var(--success);
+  font-weight: 700;
+}
+
+.unit-info-skill-name {
+  font-size: 12px;
+  font-weight: 700;
+  color: #d6b6ff;
+}
+
+/*
+  技能小块的第一行：「被动 / 主动」徽章 + 法力回复方式。
+  法力回复方式是这一轮新加的，玩家需要知道自己的棋子
+  是"打人才攒蓝"还是"挨打才攒蓝"——这直接影响它该放前排还是后排。
+*/
+.unit-info-skill-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.unit-info-skill-badge {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(160, 120, 255, 0.18);
+  color: #d6b6ff;
+}
+
+/* 3 星专属技能用金色：一眼看出"这是升满才有的东西" */
+.unit-info-skill-badge.star3 {
+  background: rgba(255, 215, 94, 0.18);
+  color: #ffd75e;
+}
+
+.unit-info-skill-mana {
+  font-size: 9.5px;
+  color: var(--text-dim);
+}
+
+.unit-info-skill-desc {
+  font-size: 10.5px;
+  color: var(--text-dim);
+  line-height: 1.5;
+  margin-top: 3px;
+}
+
+.unit-info-skill-note {
+  font-size: 9.5px;
+  line-height: 1.5;
+  margin-top: 4px;
+  padding: 3px 6px;
+  border-left: 2px solid #ffd75e;
+  background: rgba(255, 215, 94, 0.08);
+  color: #e8d9a8;
+}
+
+.unit-info-skill-note.dim {
+  border-left-color: rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-dim);
+}
+
+/* ★ 0.0.3：野怪详情页的"技能详表"（档位 / 一二阶段 / 逐条机制） */
+.unit-info-skill-detail {
+  margin-top: 5px;
+  padding: 4px 7px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.035);
+  border-left: 2px solid rgba(122, 170, 255, 0.5);
+}
+
+.unit-info-skill-detail-line {
+  font-size: 9.5px;
+  line-height: 1.55;
+  color: var(--text-dim);
+}
+
+/* ★ 0.0.3：战斗中数值被改过时的上下标记（攻速 / 双抗 / 攻击） */
+.unit-info-up,
+.unit-info-down {
+  font-style: normal;
+  font-size: 8px;
+  margin-left: 2px;
+  vertical-align: 1px;
+}
+
+.unit-info-up {
+  color: #3ddc84;
+}
+
+.unit-info-down {
+  color: #ff8a5a;
+}
+
+.unit-info-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 6px;
+}
+
+.unit-info-actions .ghost-btn {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  padding: 5px 0;
+}
+
+/* ============================================================
+   ★ 彩蛋棋子「维维美·绝对主角」：炫彩卡面
+   ============================================================
+   用户要求"商店边框为炫彩的感觉，以浅蓝和淡紫色、分数渐变为主"。
+
+   【渐变描边是怎么做出来的？】
+   卡片本身就是 `border: 3px solid transparent` + 一层 background，
+   所以只要给它**两层** background：
+     · 第一层填内部（background-clip: padding-box）
+     · 第二层填到边框（background-clip: border-box）
+   边框那一层是浅蓝↔淡紫的多色渐变 —— 于是就有了"渐变描边"，
+   不用额外塞伪元素，也不会影响布局。
+   ============================================================ */
+
+.shop-slot.egg {
+  background-image:
+    linear-gradient(135deg, rgba(34, 46, 78, 0.72), rgba(16, 21, 36, 0.96)),
+    linear-gradient(135deg, #8fd4ff, #b9c4ff, #d6b8ff, #a9c8ff, #8fd4ff);
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+  /* 内联的稀有度色必须让位（JS 那边已经设成 transparent，这里再兜一层） */
+  border-color: transparent;
+}
+
+/* 彩蛋的立绘底：浅蓝 → 淡紫的柔和渐变（"干员背景卡面同样"） */
+.shop-portrait-box.egg {
+  background-image: linear-gradient(
+    135deg,
+    rgba(143, 212, 255, 0.55),
+    rgba(201, 176, 255, 0.5) 55%,
+    rgba(143, 212, 255, 0.4)
+  );
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+}
+
+/* 费用角标也用炫彩底（20 这个数字本身就很显眼） */
+.shop-cost-badge.egg {
+  background-image: linear-gradient(135deg, #8fd4ff, #c9b0ff);
+  color: #161d2b;
+  font-weight: 800;
+}
+
+/* 备战席里那颗"彩蛋"标签，同样是浅蓝紫 */
+.bench-star-strip.egg {
+  background: linear-gradient(90deg, #8fd4ff, #c9b0ff);
+}
+.bench-star-strip.egg .bench-star-text {
+  color: #161d2b;
+}
+
+/* ============================================================
+   商店：升星提示
+   ============================================================
+   自走棋里最有用的一条提示 —— 它告诉你「这张卡现在买就是升级」。
+   以前只能自己数备战席，很容易错过。
+   ============================================================ */
+
+.shop-slot.can-upgrade {
+  /* 整张卡微微呼吸，在 5 张卡里一眼跳出来 */
+  animation: can-upgrade-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes can-upgrade-pulse {
+  0%, 100% {
+    filter: brightness(1);
+  }
+  50% {
+    filter: brightness(1.28) saturate(1.15);
+  }
+}
+
+/* ============================================================
+   ★ 0.0.3 需求 2：卡面右上角"已拥有 N 个同名干员"
+   ============================================================
+   右上角原本是「可升星 / 已拥有 x/3」的地盘，所以这里要排个序：
+     · 已拥有角标占最上角（需求点名的位置）
+     · 「可升星」「x/3」被挤到它下面一行（用兄弟选择器错开，不靠 JS 判断）
+   颜色避开金色（那是"可升星"的专属色），用青色系，两者同屏也不打架。
+   ============================================================ */
+
+.shop-owned-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 3;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: rgba(12, 34, 48, 0.88);
+  border: 1px solid rgba(92, 201, 201, 0.7);
+  color: #9fe8e8;
+  font-size: 9.5px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+}
+
+/* 有"已拥有"角标时，升星提示往下让一行（DOM 顺序：owned -> upgrade） */
+.shop-owned-badge ~ .upgrade-badge,
+.shop-owned-badge ~ .upgrade-hint {
+  top: 22px;
+}
+
+.upgrade-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 3;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, #ffd54a, #ff9d2e);
+  color: #241a00;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  box-shadow: 0 2px 8px rgba(255, 170, 40, 0.5);
+  pointer-events: none;
+}
+
+/* 还差几个才能合成：低调一点的角标 */
+.upgrade-hint {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 3;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: rgba(10, 14, 24, 0.8);
+  color: var(--text-dim);
+  font-size: 9.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+/* ============================================================
+   牌库抽干
+   ============================================================
+   和"买不起"是两种完全不同的状态，所以颜色要区分开：
+   买不起是暗（钱的问题），没货是发灰 + 打个叉（牌的问题）。
+   混在一起的话，玩家会以为自己在攒钱，其实等多久都没用。
+   ============================================================ */
+
+.shop-slot.sold-out {
+  filter: grayscale(0.85) brightness(0.6);
+  cursor: not-allowed;
+}
+
+.shop-slot.sold-out::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  border-radius: inherit;
+  /* 斜叉：一眼看出"这张牌没了" */
+  background-image: linear-gradient(
+    to top right,
+    transparent 48%,
+    rgba(255, 90, 90, 0.75) 48%,
+    rgba(255, 90, 90, 0.75) 52%,
+    transparent 52%
+  );
+  pointer-events: none;
+}
+
+.pool-left {
+  position: absolute;
+  bottom: 3px;
+  right: 4px;
+  z-index: 3;
+  font-size: 9px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+/* ============================================================
+   备战席：头像
+   ============================================================ */
+
+.bench-portrait-box {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.bench-portrait-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* 名字要有底衬，否则压在人像脸上看不清 */
+.bench-name {
+  position: relative;
+  z-index: 2;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95), 0 0 8px rgba(0, 0, 0, 0.9);
+}
+
+/* ============================================================
+   备战席星级：名字下面一条纯色底衬
+   ============================================================
+   【为什么要单独一条实心色条？】
+   以前星星是直接叠在立绘/名字上的，而备战席的头像是真立绘
+   （有些立绘本身就很亮），金色的星压在亮色上根本看不清 ——
+   这正是"备战席卡面星级看不清楚"的原因。
+   现在给它一块**不透明的深色底**，对比度就永远够了，
+   不管下面是什么立绘都一样清楚。
+   ============================================================ */
+.bench-star-strip {
+  position: relative;
+  z-index: 2;
+  margin-top: 2px;
+  padding: 1px 0;
+  border-radius: 4px;
+  /* 不透明深色底：这是"看得清"的关键，不要改成半透明 */
+  background: rgba(8, 11, 20, 0.92);
+  box-shadow: inset 0 0 0 1px rgba(255, 215, 94, 0.35);
+  text-align: center;
+  line-height: 1.2;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.bench-star-text {
+  font-size: 10px;
+  letter-spacing: 1px;
+  color: #ffd75e;
+  /* 描边让星星在深底上也锐利 */
+  text-shadow: 0 0 3px rgba(255, 190, 40, 0.9), 0 1px 0 rgba(0, 0, 0, 0.9);
+}
+
+/* 三星用金色渐变，一眼区分"这个已经满了" */
+.bench-slot[data-star='3'] .bench-star-strip {
+  background: linear-gradient(90deg, rgba(120, 80, 0, 0.95), rgba(255, 200, 60, 0.28), rgba(120, 80, 0, 0.95));
+  box-shadow: inset 0 0 0 1px rgba(255, 215, 94, 0.8);
+}
+
+.bench-rarity-dot {
+  z-index: 3;
+}
+
+/* 单机模式的本波敌人提示 */
+.wave-hint {
+  margin-left: 12px;
+  padding: 3px 10px;
+  border-radius: 8px;
+  background: rgba(255, 120, 90, 0.16);
+  border: 1px solid rgba(255, 120, 90, 0.4);
+  color: #ffb092;
+  font-size: 11.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* ============================================================
+   ★ 拖动相关的全局规则（踩过坑，别删）
+   ============================================================
+   【bug 现象】备战席的干员"拖不动"：一拖就只跟着一张图片走，放不下去。
+
+   【根因】`<img>` 元素**天生是可以拖的**（HTML5 原生拖放）。
+   你在图片上按下并移动时，浏览器会启动自己的"拖图片"行为，
+   并且**发出 pointercancel** 把我们的拖动打断 ——
+   而 pointercancel 的处理是 cancelDrag()，于是整个拖动就被取消了。
+   图片越小越容易踩到（我们备战席的头像正好铺满整个格子）。
+
+   【修法三保险】
+     1. 图片一律 `pointer-events: none` —— 指针事件永远落到父元素上，
+        图片既不会成为事件目标，也不可能发起原生拖动（最彻底的一条）
+     2. 图片加 `-webkit-user-drag: none` / `user-drag: none`
+     3. JS 里再兜一层：整个文档禁掉 dragstart（见 main.ts）
+   下面这条规则覆盖所有地方 —— 商店、备战席、羁绊详情、干员信息窗口。
+   ============================================================ */
+img {
+  -webkit-user-drag: none;
+  user-drag: none;
+  user-select: none;
+  pointer-events: none;
+}
+
+/*
+  可拖动的东西上不要有默认的触摸手势（否则触屏拖动会变成滚动页面），
+  也要禁掉文字选中（不然拖动时会拖出一片蓝色选区）
+*/
+.bench-slot,
+.shop-slot,
+#stage {
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* ============================================================
+   二次确认
+   ============================================================ */
+
+.confirm-card {
+  width: min(400px, 90vw);
+  text-align: center;
+  /* 确认框是居中弹窗，不是内嵌面板 —— 复用 .detail-card 的外观 */
+  padding: 24px 26px;
+  background: rgba(16, 20, 34, 0.97);
+  border: 1px solid var(--panel-border);
+  border-radius: 16px;
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.7);
+}
+
+.confirm-title {
+  font-size: 20px;
+  font-weight: 800;
+  margin-bottom: 10px;
+}
+
+.confirm-message {
+  font-size: 12.5px;
+  color: var(--text-dim);
+  line-height: 1.75;
+  margin-bottom: 18px;
+}
+
+/* ★ 0.1.4 重连失败浮层：第二行是"原因 + 下一步 + 错误码"，小一号、再暗一点 */
+.resume-failed-hint {
+  margin-top: -10px;
+  font-size: 11.5px;
+  opacity: 0.85;
+}
+
+.primary-btn.danger {
+  background: linear-gradient(180deg, #c0392b, #8e2a1f);
+  border-color: #e05a4a;
+}
+
+.primary-btn.danger:hover {
+  background: linear-gradient(180deg, #d84838, #a53325);
+}
+
+/* ============================================================
+   ★ 0.1.2 断线重连浮层
+   ============================================================
+   它本身就是个 .menu-overlay，所以这里只做两件事：
+     1. 把层级抬到 #result-page(300) 之上 —— 重连中连结算横幅都不该抢焦点；
+     2. 给标题加一个呼吸的圆点，让"还在动"这件事一眼可见（静止的弹窗最像卡死）。
+   ============================================================ */
+#resync-overlay {
+  z-index: 400;
+}
+
+#resync-overlay .confirm-title {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+#resync-overlay .confirm-title::before {
+  content: '';
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent-strong);
+  box-shadow: 0 0 12px rgba(111, 182, 255, 0.9);
+  animation: resync-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes resync-pulse {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: scale(0.78);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* 系统开了"减少动态效果"就不闪，保持常亮 */
+@media (prefers-reduced-motion: reduce) {
+  #resync-overlay .confirm-title::before {
+    animation: none;
+    opacity: 1;
+  }
+}
+
+/* ============================================================
+   ★ 0.1.2 「本机正在对局中」浮层
+   ============================================================
+   一台机器只能算一个玩家：另一个标签页在玩的时候，新标签页弹这个，
+   由玩家自己决定要不要**接管** —— 绝不默默把座位抢走。
+   层级和 #resync-overlay 一样（都盖过结算页），但**没有**呼吸圆点：
+   它是"等你决定"，不是"正在忙"。
+   ============================================================ */
+#machine-busy-overlay {
+  z-index: 400;
+}
+
+/* ---------------- 结算浮层 ---------------- */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(5, 7, 14, 0.72);
+  backdrop-filter: blur(4px);
+  z-index: 40;
+}
+
+.overlay-card {
+  padding: 28px 40px;
+  background: var(--panel-solid);
+  border: 1px solid var(--panel-border);
+  border-radius: 18px;
+  text-align: center;
+  min-width: 320px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+}
+
+.overlay-title {
+  font-size: 32px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  margin-bottom: 12px;
+}
+
+.overlay-title.win {
+  color: var(--success);
+}
+
+.overlay-title.lose {
+  color: var(--danger);
+}
+
+.overlay-title.draw {
+  color: var(--gold);
+}
+
+.overlay-detail {
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.8;
+  margin-bottom: 20px;
+}
+
+.overlay-buttons {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+
+.lobby-card {
+  min-width: 400px;
+  max-width: 92vw;
+}
+
+.lobby-title {
+  font-size: 22px;
+  font-weight: 800;
+  margin-bottom: 8px;
+}
+
+.lobby-title .mono {
+  color: var(--accent-strong);
+  letter-spacing: 0.2em;
+}
+
+.lobby-status {
+  font-size: 12px;
+  color: var(--text-dim);
+  min-height: 18px;
+  margin-bottom: 14px;
+}
+
+/* ---------------- 提示气泡 ---------------- */
+
+.toast {
+  position: fixed;
+  bottom: calc(var(--dock-h) + 16px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 9px 20px;
+  background: rgba(30, 40, 66, 0.97);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  font-size: 13px;
+  /*
+    ★★ 0.3 bug：提示"看不到"。
+    以前是 50，而 `.menu-overlay`（大厅 / 房间 / 各种浮层）是 100 ——
+    于是"点房间号复制"这种发生在**大厅里**的提示，被大厅那层半透明底整块盖住，
+    玩家看到的就是"点了没反应"。
+    提示是**临时通知**、且 `pointer-events: none` 不挡操作，
+    所以它应该压在几乎所有东西上面（但低于正在拖的 ghost，那个是 9999）。
+  */
+  z-index: 900;
+  pointer-events: none;
+}
+
+.toast.error {
+  border-color: var(--danger);
+  color: #ffc4c4;
+}
+
+/* ---------------- 滚动条 ---------------- */
+
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+/* 商店是横向滚动（卡片固定宽度），滚动条做细一点，别抢视觉 */
+.shop-slots::-webkit-scrollbar {
+  height: 6px;
+}
+
+.shop-slots::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 3px;
+}
+
+.shop-slots::-webkit-scrollbar-thumb {
+  background: rgba(120, 150, 220, 0.45);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(110, 140, 200, 0.4);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(110, 140, 200, 0.65);
+}
+
+/* ---------------- 窄屏 ---------------- */
+
+@media (max-width: 1180px) {
+  #dock {
+    grid-template-columns: 160px 1fr 190px;
+  }
+  #traits {
+    width: 160px;
+  }
+  #sidebar {
+    width: 210px;
+  }
+  /*
+    ★ 0.3.5：小窗口下把商店卡的最小宽度收到 160。
+    卡片本来是 `flex: 1 1 190px`（190 是"文字还看得清"的下限），
+    1280 以下 5 张 × 190 就超出了中间那列 —— 以前只能横向滚动，
+    第 5 张被切掉一半。收到 160 之后 5 张刚好放得下（实测 1024 也够）。
+  */
+  .shop-slot {
+    flex-basis: 160px;
+    min-width: 160px;
+  }
+}
+
+@media (max-width: 900px) {
+  :root {
+    /* 窄屏时也保留足够的内容高度，只是卡片宽度会缩一点 */
+    --dock-h: clamp(320px, 40vh, 366px);
+  }
+  .brand {
+    letter-spacing: 0.08em;
+    font-size: 14px;
+  }
+  #traits {
+    width: 138px;
+  }
+  #sidebar {
+    width: 180px;
+  }
+  .shop-slot-traits {
+    display: none;
+  }
+  .lock-btn {
+    min-width: 0;
+  }
+}
+
+/* ============================================================
+   背景音乐控制台（0.0.2）
+   ============================================================
+
+   【放在哪？为什么这么做？】
+
+   需求是"放到主界面左上角"，但左上角对局中已经被占了：
+     · #topbar（高 52px）最左边是红色的「← 返回大厅」
+     · 它下面紧接着 #traits（羁绊面板，left:10 / top:60 / 宽 190）
+
+   所以这里不能简单地 `position: fixed; top: 12px; left: 12px` ——
+   对局中会和返回键重叠，往下挪又正好盖住羁绊面板。
+
+   解法是让 dock（那颗音符按钮）**换位置**：
+     · 大厅 / 房间界面：浮在左上角（那里没有顶栏，是空的）
+     · 对局中：作为 flex 子元素**插进 #topbar**，紧跟在返回键后面
+       （由 main.ts 的 placeMusicDock() 搬 DOM 节点）
+   这样两种情况下它都真的在"左上角"，而且谁都不挡。
+
+   【面板为什么不在 dock 里面？】
+   因为 #topbar 有 z-index:20，面板作为它的后代会被关进那个层叠上下文，
+   被 z-index:25 的战斗控制条压住。面板挂在 body 上（z-index:200）就没这问题，
+   位置由 JS 按 dock 的实际矩形算出来。
+   ============================================================ */
+
+.music-dock {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: none;
+  z-index: 30;
+}
+
+/* 浮在左上角（大厅 / 房间界面） */
+.music-dock.floating {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  /* 要盖住 .menu-overlay（z-index: 100），否则大厅里点不到 */
+  z-index: 150;
+}
+
+.music-pill {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 190px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: rgba(18, 24, 40, 0.72);
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+
+.music-pill:hover {
+  color: var(--text);
+  border-color: rgba(120, 150, 220, 0.5);
+}
+
+/* 正在放的时候按钮亮起来 —— 一眼能看出"有声音在响" */
+.music-dock.playing .music-pill {
+  color: #cfe4ff;
+  border-color: rgba(74, 158, 255, 0.6);
+  background: rgba(30, 62, 110, 0.72);
+}
+
+.music-icon {
+  font-size: 15px;
+  line-height: 1;
+}
+
+.music-dock.playing .music-icon {
+  animation: music-beat 1.6s ease-in-out infinite;
+}
+
+@keyframes music-beat {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.22); }
+}
+
+.music-now {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* ---------------- 控制面板 ---------------- */
+
+.music-panel {
+  position: fixed;
+  z-index: 200;
+  width: 306px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 12px;
+  background: var(--panel-solid);
+  border: 1px solid rgba(120, 150, 220, 0.32);
+  border-radius: 14px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(12px);
+}
+
+.music-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.music-head-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+
+.music-current {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.35;
+  /* 曲名可能很长，最多两行，多的省略 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.music-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.music-transport {
+  gap: 6px;
+}
+
+.music-time {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.music-icon-btn {
+  flex: none;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 8px;
+  font-size: 14px;
+  color: var(--text);
+  background: rgba(30, 38, 62, 0.85);
+  border: 1px solid var(--panel-border);
+  border-radius: 9px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.music-icon-btn:hover:not(:disabled) {
+  background: rgba(74, 158, 255, 0.28);
+  border-color: rgba(120, 170, 255, 0.6);
+}
+
+.music-icon-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* 中间那颗最大的播放/暂停键 */
+.music-play-btn {
+  min-width: 46px;
+  font-size: 17px;
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent-strong);
+}
+
+.music-play-btn:hover:not(:disabled) {
+  background: var(--accent-strong);
+}
+
+.music-select {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--text);
+  background: rgba(12, 16, 28, 0.95);
+  border: 1px solid var(--panel-border);
+  border-radius: 9px;
+  cursor: pointer;
+  /* 下拉展开时原生列表用系统配色，这里只保证收起时的样子 */
+}
+
+.music-select:focus {
+  outline: 1px solid var(--accent);
+}
+
+/* 随机 / 循环：选中态用蓝色底，一眼看出开没开 */
+.music-mode-btn {
+  flex: 1;
+  padding: 7px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: rgba(30, 38, 62, 0.85);
+  border: 1px solid var(--panel-border);
+  border-radius: 9px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.music-mode-btn:hover {
+  color: var(--text);
+}
+
+.music-mode-btn.active {
+  color: #fff;
+  background: rgba(74, 158, 255, 0.42);
+  border-color: rgba(120, 170, 255, 0.7);
+}
+
+.music-volume {
+  flex: 1;
+  height: 20px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.music-hint {
+  padding: 7px 9px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--gold);
+  background: rgba(90, 70, 10, 0.35);
+  border: 1px solid rgba(255, 215, 94, 0.35);
+  border-radius: 8px;
+}
+
+@media (max-width: 860px) {
+  .music-panel {
+    width: min(306px, calc(100vw - 24px));
+  }
+}
+
+/* ============================================================
+   修改器（★ 0.0.3）—— 只有测试模式才出现
+   ============================================================
+   按钮在顶栏（视角徽标左边），面板挂在 body 上。
+   面板不用 absolute 而是 fixed：位置由 main.ts 按按钮矩形算，
+   顺带做一次"别超出屏幕"的收敛（和音乐面板同一套做法）。
+   ============================================================ */
+
+.modifier-btn {
+  flex: 0 0 auto;
+  margin-right: 6px;
+  border-color: rgba(255, 186, 82, 0.5);
+  color: #ffd28a;
+}
+
+.modifier-btn.active {
+  background: rgba(255, 186, 82, 0.22);
+  border-color: rgba(255, 186, 82, 0.85);
+}
+
+.modifier-panel {
+  position: fixed;
+  z-index: 200;
+  width: 262px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--panel-solid);
+  border: 1px solid rgba(255, 186, 82, 0.38);
+  border-radius: 14px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(12px);
+}
+
+.modifier-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.modifier-head-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #ffd28a;
+}
+
+.modifier-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.modifier-label {
+  color: var(--text-dim);
+}
+
+.modifier-switch {
+  width: 16px;
+  height: 16px;
+  accent-color: #ffb347;
+  cursor: pointer;
+}
+
+.modifier-mini {
+  padding: 2px 10px;
+  font-size: 12px;
+}
+
+.modifier-sep {
+  height: 1px;
+  margin: 2px 0;
+  background: rgba(120, 150, 220, 0.25);
+}
+
+.modifier-sub {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #ffd28a;
+}
+
+.modifier-grant {
+  display: flex;
+  gap: 6px;
+}
+
+.modifier-select {
+  min-width: 0;
+  flex: 1 1 auto;
+  padding: 4px 6px;
+  font-size: 12px;
+  color: var(--text);
+  background: rgba(12, 16, 28, 0.85);
+  border: 1px solid rgba(120, 150, 220, 0.35);
+  border-radius: 8px;
+}
+
+.modifier-star {
+  flex: 0 0 72px;
+}
+
+.modifier-note {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-dim);
+  opacity: 0.85;
+}
+
+/* ★ 0.0.3：等级下拉（和星级那个并排，宽度固定一点） */
+.modifier-level {
+  flex: 0 0 88px;
+}
+
+/* ============================================================
+   ★ 0.0.3 测试沙盒「切换阵营」按钮（就放在「修改器」按钮旁边）
+   ============================================================
+   只有测试模式才显示。颜色跟着"点它会切到哪一边"走：
+     to-red  蓝色文字（现在蓝方，点了去红方）
+     to-blue 红色文字（现在红方，点了回蓝方）
+   ============================================================ */
+.side-switch-btn {
+  flex: 0 0 auto;
+  margin-right: 6px;
+}
+
+.side-switch-btn.to-red {
+  border-color: rgba(255, 120, 110, 0.5);
+  color: #ffb0a6;
+}
+
+.side-switch-btn.to-blue {
+  border-color: rgba(90, 170, 255, 0.5);
+  color: #a9d2ff;
+}
+
+.side-switch-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+@media (max-width: 860px) {
+  .modifier-panel {
+    width: min(262px, calc(100vw - 24px));
+  }
+}
+
+/* ============================================================
+   ★ 0.0.3 藏品（装备）栏 —— 右侧第三个页签的内容
+   ============================================================
+   结构（见 index.html 的 #side-pane-collection）：
+     穿戴藏品栏（10 格，5 列 × 2 行）
+     共享藏品栏（5 格）
+     共享装备位（4 格）—— 这里的共享藏品才真正生效
+     🗑 删除藏品（最下方，红色虚线，拖进来就销毁）
+
+   ★ 这两个名字才是玩家看到的字；数据层里的"A 类 / B 类 / slot: 'A' | 'B'"
+     只是分类代号。文案别在这里硬编码，走 item-text.ts 和 zoneLabel()。
+   ============================================================ */
+
+.item-sub-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+  margin: 10px 0 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--accent-strong);
+}
+
+/*
+  ★ 藏品栏这一块要能滚动。
+  【为什么？】三栏格子 + 删除区加起来比右侧栏高（尤其小屏幕上），
+  不滚的话最下面的「删除藏品」会被裁掉 —— 而它是需求里明确要求存在的功能，
+  "看不见"等于"没做"。
+*/
+#side-pane-collection .panel-block {
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* 计数（3/10 这种）—— 用等宽数字，数字跳动时不会左右晃 */
+.item-count {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+  藏品格子：正方形、五列。
+  用 grid 而不是 flex-wrap —— 格数变了（以后改 ITEM_A_SLOTS）也不用动 CSS，
+  而且最后一行的空格子也老老实实占着位置（"还剩几格"一眼看得出）。
+*/
+.item-slots {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 5px;
+}
+
+.item-slot {
+  position: relative;
+  /* 正方形：宽度由 grid 给，高度用 aspect-ratio 撑出来 */
+  aspect-ratio: 1;
+  border-radius: 8px;
+  border: 1px solid rgba(120, 150, 220, 0.28);
+  background: rgba(20, 26, 44, 0.8);
+  cursor: grab;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 3px;
+  overflow: hidden;
+  transition: filter 0.12s, box-shadow 0.12s;
+}
+
+.item-slot:hover {
+  filter: brightness(1.22);
+}
+
+/* 空格子：虚线框，明确"这里能放东西" */
+.item-slot.empty {
+  cursor: default;
+  border-style: dashed;
+  border-color: rgba(120, 150, 220, 0.2);
+  background: rgba(20, 26, 44, 0.38);
+}
+
+.item-slot.empty:hover {
+  filter: none;
+}
+
+/*
+  ★ 0.3.4 观战：看的是**别人的**藏品栏 —— 只是展示。
+  `cursor: grab` 会骗人（拖了不会动），所以连手型都要收掉。
+*/
+.item-slot.readonly {
+  cursor: default;
+}
+.item-slot.readonly:hover {
+  filter: none;
+}
+
+/* 共享装备栏的空格子写一个「+」：它是"拖进来才生效"的那一块，要显眼一点 */
+.item-slots-equip .item-slot.empty {
+  color: rgba(120, 150, 220, 0.45);
+  font-size: 16px;
+  font-weight: 700;
+  border-color: rgba(120, 150, 220, 0.32);
+}
+
+/* 共享装备栏生效中：底色偏绿一点，和"仓库"区分开 */
+.item-slot.equipped {
+  background: rgba(28, 46, 44, 0.8);
+}
+
+/*
+  拖动时的落点高亮。
+  ★ 用 box-shadow 的发光而不是改 border 颜色 ——
+  border 颜色已经拿去表达"稀有度"了（和内联样式里的 borderColor 会打架）。
+*/
+.item-slot.drop-target {
+  box-shadow: 0 0 14px rgba(74, 158, 255, 0.75), inset 0 0 12px rgba(74, 158, 255, 0.3);
+}
+
+/* 被当成"干员"的落点：备战席那一格（绿光 = 往它身上装） */
+.bench-slot.item-target {
+  outline: 2px solid var(--success);
+  outline-offset: 1px;
+  box-shadow: 0 0 14px rgba(61, 220, 132, 0.6);
+}
+
+/* 图标：固定大小的小方块；没图时是"首字 + 稀有度色" */
+.item-icon {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  border-radius: 6px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.item-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  /* 图标本身带透明底，直接铺；不描边的话深色底上会看不清轮廓 */
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.8));
+}
+
+.item-icon-fallback {
+  font-size: 16px;
+  font-weight: 700;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+
+.item-slot-name {
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.1;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+/* 稀有度角标（右上角一个小方块）—— 和备战席那个 bench-rarity-dot 同一套语义 */
+.item-slot-rarity {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 5px;
+  height: 5px;
+  border-radius: 2px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+}
+
+/*
+  共享藏品效果（★ 0.1.1）。
+  ============================================================
+  和上面的「共享装备位」是一对：
+    · 装备位是"我摆了什么"（可以空着、可以放一件还没生效的）
+    · 这里是"所以现在到底生效着什么"（失落之钥这种装上就销毁的、
+      以及每回合都在变的成长层数，只有这里才看得见）
+
+  每一行 = 一件正在生效的藏品：图标 + 名字 + 效果全文 + 成长层数。
+  故意用**左边一条竖线**而不是背景色块：这一栏信息密度高，
+  色块会让整块面板看起来"全是需要我注意的东西"。
+*/
+.item-effect-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.item-effect {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border-left: 3px solid transparent;
+  background: rgba(30, 38, 60, 0.62);
+}
+
+/* 永久效果（失落之钥那种"本局一直生效"）单独一个色，和"当前装着的那几件"区分开 */
+.item-effect.permanent {
+  background: rgba(70, 56, 18, 0.5);
+}
+
+/* 一件都还没生效时的占位说明 —— 不留空白，否则像界面坏了 */
+.item-effect-empty {
+  padding: 6px 8px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  opacity: 0.85;
+}
+
+.item-effect .item-icon {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+}
+
+.item-effect-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.item-effect-name {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.item-effect-tag {
+  margin-left: 5px;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 700;
+  background: rgba(255, 215, 94, 0.22);
+  color: var(--gold);
+}
+
+.item-effect-desc {
+  margin-top: 1px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+
+/*
+  详情页的「当前效果」小标签（★ 0.1.1）。
+  ============================================================
+  战斗中点开一个干员时，把身上正生效的效果列出来（护盾 / 眩晕 / 隐匿 /
+  无敌 / 流血 / 飞行…）。颜色跟着效果自身的主题色走（见 status-effects.ts），
+  所以"这是好事还是坏事"不用读字就能看出来。
+*/
+.unit-info-effect {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 7px;
+  border-radius: 6px;
+  border-left: 3px solid transparent;
+  background: rgba(30, 38, 60, 0.7);
+  font-size: 11px;
+}
+
+.unit-info-effect-icon {
+  font-size: 11px;
+  line-height: 1;
+}
+
+.unit-info-effect-name {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.unit-info-effect-detail {
+  font-size: 10px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.unit-info-effect-time {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-size: 9.5px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 增益 / 减益 / 中性：只调左边那条竖线和底色，文字颜色跟着效果主题色走 */
+.unit-info-effect.buff {
+  background: rgba(34, 74, 52, 0.55);
+}
+
+.unit-info-effect.debuff {
+  background: rgba(86, 30, 32, 0.55);
+}
+
+.unit-info-effects-empty {
+  font-size: 10.5px;
+  color: var(--text-dim);
+  opacity: 0.85;
+}
+
+/*
+  删除区（最下方）。
+  ★ 刻意做成"红色 + 虚线 + 空着的时候低调"：
+  它可以销毁一件不可恢复的藏品，所以既要好找、又不能诱人去点。
+  悬停/拖动到它上面时才变亮。
+*/
+.item-delete-zone {
+  margin-top: 12px;
+  padding: 9px 10px;
+  border-radius: 9px;
+  border: 1.5px dashed rgba(255, 110, 110, 0.42);
+  background: rgba(60, 20, 24, 0.35);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  color: #ffb0a6;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+  transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
+}
+
+.item-delete-icon {
+  font-size: 15px;
+  line-height: 1;
+}
+
+.item-delete-hint {
+  font-size: 9.5px;
+  font-weight: 500;
+  color: rgba(255, 176, 166, 0.7);
+}
+
+.item-delete-zone.drop-target {
+  border-color: #ff6e6e;
+  border-style: solid;
+  background: rgba(150, 34, 40, 0.55);
+  box-shadow: 0 0 16px rgba(255, 90, 90, 0.6);
+}
+
+/* 非布阵阶段：整块置灰（拖动会被拒绝，见 renderCollection 的说明） */
+.side-pane.locked .item-slots,
+.side-pane.locked .item-sub-title {
+  opacity: 0.5;
+}
+
+.side-pane.locked .item-slot {
+  cursor: default;
+}
+
+/* 藏品版本的拖动预览：左边一个「穿戴/共享」小徽章 */
+.item-ghost {
+  border-color: rgba(120, 150, 220, 0.7);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55), 0 0 16px rgba(120, 150, 220, 0.3);
+}
+
+.item-ghost-badge {
+  font-size: 9px;
+  font-weight: 700;
+  color: #101420;
+  padding: 2px 5px;
+  border-radius: 5px;
+}
+
+/* ============================================================
+   ★ 0.0.3 干员详情页里的「藏品」栏（那两件装备 + 卸下）
+   ============================================================ */
+.unit-info-items {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.unit-info-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 7px;
+  border-radius: 8px;
+  background: rgba(30, 38, 60, 0.62);
+  /* 左边一道稀有度色条（由 main.ts 写 borderLeftColor） */
+  border-left: 3px solid transparent;
+}
+
+.unit-info-item.empty {
+  border-left-color: rgba(120, 150, 220, 0.2);
+  background: rgba(30, 38, 60, 0.35);
+}
+
+.unit-info-item .item-icon {
+  width: 26px;
+  height: 26px;
+}
+
+.unit-info-item-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.unit-info-item-name {
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.unit-info-item-effect {
+  font-size: 10px;
+  color: var(--text-dim);
+  line-height: 1.25;
+  /* 效果说明最多两行，超出省略（完整版在 title 里） */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.unit-info-item-empty {
+  font-size: 10.5px;
+  color: var(--text-dim);
+  opacity: 0.8;
+}
+
+.unit-info-item-off {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  font-size: 10.5px;
+}
+
+/* 卸下按钮被禁用时（穿戴藏品栏满了）—— 让人一眼看出"现在点不了" */
+.unit-info-item-off:disabled {
+  border-color: rgba(255, 110, 110, 0.35);
+  color: rgba(255, 176, 166, 0.6);
+}
+
+/* ============================================================
+   ★ 0.0.3 备战席卡面上的藏品小圆点
+   ============================================================
+   和棋盘上血条左边那两只是同一套语义（绿 = 有、灰 = 空），
+   颜色也取自同一组常量（ITEM_DOT_COLORS）。
+   放在卡面左下角：右上角已经被稀有度角标占了。
+   ============================================================ */
+.bench-item-dots {
+  position: absolute;
+  left: 4px;
+  top: 3px;
+  display: flex;
+  gap: 2px;
+  z-index: 2;
+}
+
+.bench-item-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1px solid rgba(6, 9, 16, 0.9);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+}
+
+
+/* ============================================================
+   ★ 0.1.1：多人模式的「只能观战」相关样式
+   ============================================================
+   两块：
+     · `.trait-watch-note` —— 羁绊栏顶部那句"正在看 XXX 的羁绊"
+     · `.bench-slot.watching` / `#dock.eliminated` —— 别人的备战席 / 自己被淘汰
+   ============================================================ */
+
+.trait-watch-note {
+  font-size: 11px;
+  color: var(--gold);
+  padding: 1px 0 6px;
+  margin-bottom: 6px;
+  border-bottom: 1px dashed rgba(217, 169, 46, 0.35);
+}
+
+/*
+  观战时的备战席：整格稍微压暗、去掉悬停的抬升感 ——
+  它是**只读**的（没有挂任何拖动/点击处理器），
+  样子上也得让玩家看出来"这里点不动"，别让人反复戳。
+*/
+.bench-slot.watching {
+  cursor: default;
+  filter: saturate(0.7) brightness(0.9);
+}
+
+.bench-slot.watching:hover {
+  transform: none;
+  filter: saturate(0.7) brightness(0.9);
+}
+
+/* 已被淘汰：整条 dock 压暗一档，"我现在只能看"这件事一眼可见 */
+#dock.eliminated {
+  opacity: 0.72;
+}
+
+/* ============================================================
+   ★ 0.1.1：备战席棋子的悬停卡片
+   ============================================================
+   鼠标移到备战席的干员上弹出来，**只显示五样**：名字 · 星级 · 羁绊 · 技能 · 射程。
+   【为什么不用浏览器自带的 title】那一行灰字没法排版，出现/消失的时机也不受控。
+
+   ★ `pointer-events: none` 是必须的：卡片紧贴在鼠标下方，
+     如果它自己收鼠标事件，会立刻触发格子的 pointerleave ⇒ 卡片一闪一闪。
+   ★ 挂在 body 上（不是格子的子元素）：格子有 overflow 裁剪，放进去会被切掉。
+   ============================================================ */
+.bench-tip {
+  position: fixed;
+  z-index: 260;
+  width: 248px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(11, 14, 26, 0.97);
+  border: 1px solid var(--panel-border);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.65);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.5;
+  pointer-events: none;
+  /*
+    ★★ 0.3：高度上限 = "屏幕减去底部栏还要留点缝"。
+    备战席贴着屏幕底边，卡片只能往上长；没有上限时它会高到放不进上方，
+    于是要么翻到下面盖住格子（以前那样），要么被切掉。
+    超过上限就在卡片内部滚动 —— 反正 `pointer-events: none`，滚不了也没关系，
+    内容按"技能 > 羁绊 > 头部"的优先级自然被裁掉的是最下面的技能描述。
+  */
+  max-height: calc(100vh - var(--dock-h) - 28px);
+  overflow: hidden;
+}
+
+.bench-tip-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 立绘留白太多，这里只用一个方形色块 + 首字，保证任何屏幕上都对齐 */
+.bench-tip-avatar {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 700;
+  color: #0b0d17;
+  background: var(--text-dim);
+}
+
+.bench-tip-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.bench-tip-stars {
+  margin-left: auto;
+  font-size: 12px;
+  color: #ffd75e;
+  letter-spacing: 1px;
+}
+
+.bench-tip-sub {
+  margin-top: 2px;
+  color: var(--text-dim);
+}
+
+.bench-tip-sec {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px dashed rgba(120, 150, 220, 0.25);
+  color: var(--text-dim);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+
+.bench-tip-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  margin-top: 3px;
+}
+
+.bench-tip-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  border-left: 3px solid var(--text-dim);
+  color: var(--text);
+  font-size: 11px;
+}
+
+.bench-tip-chip-active {
+  background: rgba(255, 215, 94, 0.14);
+}
+
+.bench-tip-chip-progress {
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.bench-tip-skill-name {
+  margin-top: 2px;
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.bench-tip-skill-desc {
+  margin-top: 1px;
+  color: var(--text);
+}
+
+/* ============================================================
+   ★ 0.1.1：联机对局结算页
+   ============================================================
+   布局（自上而下三段，中间那段滚动）：
+     .result-head  顶部摘要：回合数 + 冠军 + 本局最高伤害（全局）
+     .result-list  玩家排名列表（按名次），每位玩家一张 .result-card
+     .result-foot  说明 + 收起按钮
+   ============================================================ */
+.result-page {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(4, 6, 14, 0.86);
+}
+
+/* 两层的选择器，确保能盖过上面的 display:flex（.hidden 只有一个类） */
+.result-page.hidden {
+  display: none;
+}
+
+.result-shell {
+  width: min(960px, 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  border: 1px solid var(--panel-border);
+  background: var(--panel-solid);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.7);
+  overflow: hidden;
+}
+
+.result-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 18px;
+  background: linear-gradient(180deg, rgba(74, 158, 255, 0.16), rgba(74, 158, 255, 0));
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.result-title {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.result-sub {
+  margin-top: 3px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.result-head-mvp {
+  margin-left: auto;
+  text-align: right;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.result-mvp-label {
+  color: var(--text-dim);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
+
+.result-mvp-value {
+  color: var(--gold);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.result-list {
+  overflow-y: auto;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.result-card {
+  border-radius: 10px;
+  border: 1px solid var(--panel-border);
+  background: rgba(20, 26, 44, 0.62);
+  padding: 10px 12px;
+}
+
+.result-card.champion {
+  border-color: rgba(255, 215, 94, 0.55);
+  background: linear-gradient(180deg, rgba(255, 215, 94, 0.12), rgba(20, 26, 44, 0.62));
+}
+
+.result-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.result-rank {
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 14px;
+  color: #0b0d17;
+  background: var(--text-dim);
+}
+
+.result-rank.r1 { background: #ffd75e; }
+.result-rank.r2 { background: #cfd8e8; }
+.result-rank.r3 { background: #d79a5b; }
+
+.result-avatar {
+  flex: 0 0 34px;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  color: var(--text-dim);
+}
+
+.result-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.result-name {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.result-meta {
+  color: var(--text-dim);
+  font-size: 11px;
+  margin-top: 1px;
+}
+
+.result-mine {
+  margin-left: auto;
+  color: var(--accent-strong);
+  font-size: 11px;
+  border: 1px solid rgba(74, 158, 255, 0.5);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+.result-sec {
+  margin-top: 8px;
+}
+
+.result-sec-title {
+  color: var(--text-dim);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  margin-bottom: 4px;
+}
+
+.result-lineup,
+.result-traits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.result-unit {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  border-left: 3px solid var(--text-dim);
+  font-size: 11px;
+}
+
+.result-unit-cost {
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.result-unit-star {
+  color: #ffd75e;
+  font-size: 10px;
+  letter-spacing: 1px;
+}
+
+.result-trait {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 11px;
+}
+
+.result-trait-tier {
+  color: var(--gold);
+  font-size: 10px;
+}
+
+.result-empty {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.result-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 18px;
+  border-top: 1px solid var(--panel-border);
+  background: rgba(10, 13, 24, 0.6);
+}
+
+.result-hint {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.result-foot .primary-btn {
+  margin-left: auto;
+}
+
+/* ============================================================
+   ★ 0.1.1：布阵倒计时进入最后 10 秒 -> 变红警示
+   ============================================================
+   只改颜色，**不加闪烁动画** —— 用户报的就是"倒计时在闪"（根因是两个写入点
+   打架，见 renderPhaseBadge 的说明），再加个闪烁只会让人分不清修没修好。
+   用 id + class 两层选择器，确保压得住 .stat-value 自己的颜色。
+   ============================================================ */
+#stat-phase.urgent {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+/* ============================================================
+   ★ 0.1.1：大厅里房主的两个"管人"按钮（改名 / 踢出）
+   ============================================================
+   位置是用户指定的：「改名」在前、「踢出」在后，两个都排在
+   「未准备 / 已准备」状态标识之前。
+   这两个按钮**只有房主看得到**（客户端不渲染 + 服务端再验一次身份）。
+   ============================================================ */
+.net-player-btn {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.net-player-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.net-player-btn.kick-btn {
+  border-color: rgba(255, 90, 90, 0.5);
+  color: var(--danger);
+}
+
+.net-player-btn.kick-btn:hover {
+  background: rgba(255, 90, 90, 0.18);
+}
+
+/* 改名弹窗里的输入框 */
+.rename-input {
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--panel-border);
+  background: rgba(8, 11, 22, 0.9);
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+}
+
+.rename-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.rename-error {
+  min-height: 14px;
+  margin-top: 4px;
+  color: var(--danger);
+  font-size: 11px;
+}
+
+/* ============================================================
+   ★ 0.1.1：战斗中切换观战哪一场（房间 3 人以上才出现）
+   ============================================================
+   一条细横条，贴在战斗控制条下面。每个 chip 是一场战斗
+   （"我的战斗（我 vs 小红）" / "小明 vs 阿强"），当前那一场高亮。
+   ★ 观战进度会自动和该场对齐（见 main.ts 的 watchBattle），
+     所以 chip 上不需要写"进度"之类的字。
+   ============================================================ */
+/*
+  ★ 挂在战斗条里的第二行（不是独立浮层 —— 战斗条是 fixed 的，
+    在它后面放静态元素会被排到文档流最上面去，见 index.html 里的说明）。
+  所以这里用一条虚线上边框把它和第一行分开，不再自己画背景/底边。
+*/
+.spectate-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed rgba(120, 150, 220, 0.28);
+}
+
+/* `.hidden` 只有一层类名，所以这里显式声明一次（细节度更高，稳） */
+.spectate-bar.hidden {
+  display: none;
+}
+
+.spectate-label {
+  color: var(--text-dim);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+
+.spectate-chip {
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.spectate-chip:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.spectate-chip.active {
+  border-color: var(--accent);
+  background: rgba(74, 158, 255, 0.22);
+  color: var(--accent-strong);
+  font-weight: 700;
+  cursor: default;
+}
+
+/* ============================================================
+   ★ 0.1.4 对局暂停浮层（有人掉线）
+   ============================================================
+   背景比别的浮层**淡一半**：这一等就是三分钟，
+   把棋盘糊死会让玩家连"现在什么局面"都看不见。
+   卡片本身还是实心的，字要清楚。
+   ============================================================ */
+#pause-overlay {
+  z-index: 390; /* 比结算页（300）高，比"正在重连"（400）低：重连更要紧 */
+  background: rgba(5, 7, 14, 0.42);
+  backdrop-filter: blur(2px);
+  /*
+    ★ 这一等就是三分钟，所以**不挡操作**：只有那张卡片本身可点，
+    其余地方（棋盘、商店、藏品）照样能用 —— 玩家可以一边等一边运营，
+    不至于对着一个糊死的界面干坐三分钟。
+  */
+  pointer-events: none;
+}
+
+#pause-overlay .confirm-card {
+  pointer-events: auto;
+}
+
+.pause-title {
+  color: var(--gold);
+}
+
+.pause-timer {
+  font-family: var(--mono, monospace);
+  font-size: 40px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: var(--accent-strong);
+  margin: 6px 0 2px;
+  text-shadow: 0 0 24px rgba(74, 158, 255, 0.45);
+}
+
+.pause-votes {
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-bottom: 16px;
+}
+
+.pause-hint {
+  margin-top: 14px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-dim);
+  max-width: 320px;
+}
+
+/* ============================================================
+   ★★ 0.2 MujicaAve：fever 达标的「保留 / 消耗」次级页面
+   ============================================================
+   和暂停浮层同一个形状（`#pause-overlay`），但**故意不一样的两点**：
+     · 它**挡操作**（background 不透明一点点、卡片之外也吃掉点击）——
+       用户口径是"不能主动关闭"，那就不该能绕过去继续买棋子；
+     · 层级比暂停低、比结算高 —— 结算页出来之前必须先把 fever 选掉。
+   ============================================================ */
+#fever-overlay {
+  z-index: 380;
+  background: rgba(5, 7, 14, 0.55);
+  backdrop-filter: blur(2px);
+}
+
+#fever-overlay .confirm-card {
+  pointer-events: auto;
+}
+
+.fever-title {
+  color: var(--gold);
+}
+
+.fever-total {
+  font-family: var(--mono, monospace);
+  font-size: 44px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: #e07a2c;
+  margin: 4px 0 2px;
+  text-shadow: 0 0 24px rgba(224, 122, 44, 0.5);
+}
+
+.fever-hint {
+  margin-top: 14px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-dim);
+  max-width: 340px;
+}
+
+/* 羁绊面板里那一行 fever（所有阶段都在，见 renderTraits） */
+.trait-fever {
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #e07a2c;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 已经投过票：按钮变灰、字改成"等其他人"，点了也不再有反应 */
+#pause-agree.voted {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* ============================================================
+   ★ 0.1.4 主界面右下角「回到对局」
+   ============================================================
+   只在"本机进程里还有一局没打完"时才出现（见 renderReconnectButton）。
+   做成贴着角落的胶囊按钮：它是**兜底入口**，不该和主菜单那几个大按钮抢注意力。
+   ============================================================ */
+.menu-reconnect {
+  position: absolute;
+  right: 22px;
+  bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(61, 220, 132, 0.55);
+  background: rgba(13, 32, 24, 0.86);
+  color: #6ff0a8;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  transition:
+    background 0.15s ease,
+    transform 0.1s ease;
+}
+
+.menu-reconnect:hover {
+  background: rgba(19, 48, 35, 0.95);
+}
+
+.menu-reconnect:active {
+  transform: scale(0.98);
+}
+
+/* 一颗呼吸的绿点：告诉玩家"这里有一局在等你" */
+.menu-reconnect-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #3ddc84;
+  box-shadow: 0 0 10px #3ddc84;
+  animation: reconnect-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes reconnect-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu-reconnect-dot {
+    animation: none;
+    opacity: 1;
+  }
+}
+
+/* ============================================================
+   ★ 0.1.4 「加入房间」页里的「断线重连恢复」
+   ============================================================
+   它是**手动兜底**入口：自动回座依赖一次可能失败的本机会话探测，
+   探测失败时玩家得有一条自己能走的路（见 main.ts 里 menu-join-recover 的说明）。
+   和右下角那颗「回到对局」不同，它**一直显示** —— 有没有可恢复的对局，
+   由点下去之后那一句实话来回答，而不是由那次靠不住的探测来决定。
+   ============================================================ */
+.menu-recover-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: min(320px, 88vw);
+  padding: 10px 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(61, 220, 132, 0.5);
+  background: rgba(13, 32, 24, 0.7);
+  color: #6ff0a8;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    transform 0.1s ease;
+}
+
+.menu-recover-btn:hover {
+  background: rgba(19, 48, 35, 0.9);
+}
+
+.menu-recover-btn:active {
+  transform: scale(0.98);
+}
+
+.menu-recover-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-align: center;
+  line-height: 1.6;
+  max-width: 380px;
+}
+
+/* ============================================================
+   ★★ 0.2 商店回合：坎诺特的限时商店
+   ============================================================
+   整体**绿色**（坎诺特 = 集成战略里的古怪商人，主题色就是绿）。
+   结构照参考图：左半边立绘 / 右半边货架 / 上方买·卖切换。
+   参考 `#fever-overlay`：它**可以关闭**，所以不挡底下的操作
+   （背景比 fever 那一层更透一点，但点击仍然只落在卡片上）。
+   ============================================================ */
+
+#shop-round-overlay {
+  z-index: 360;
+  background: rgba(4, 12, 9, 0.6);
+  backdrop-filter: blur(3px);
+  /* 卡片之外点击 = 关闭（和"可自由开关"的口径一致） */
+  cursor: pointer;
+}
+
+.shop-round-card {
+  pointer-events: auto;
+  cursor: default;
+  width: min(980px, 96vw);
+  max-height: 92vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  border: 1px solid rgba(120, 220, 150, 0.42);
+  background:
+    linear-gradient(180deg, rgba(24, 52, 36, 0.98), rgba(12, 30, 22, 0.98));
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(0, 0, 0, 0.35) inset;
+}
+
+/* ---- 上方：买/卖 切换 + 倒计时 + 关闭 ---- */
+.shop-round-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(120, 220, 150, 0.24);
+  background: linear-gradient(180deg, rgba(46, 92, 62, 0.9), rgba(22, 48, 34, 0.9));
+}
+
+.shop-round-tabs {
+  display: flex;
+  gap: 8px;
+}
+
+.shop-round-tab {
+  padding: 8px 22px;
+  border-radius: 8px;
+  border: 1px solid rgba(150, 235, 175, 0.4);
+  background: rgba(10, 26, 18, 0.7);
+  color: #bfe6cc;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  transition: background 0.14s, color 0.14s, border-color 0.14s;
+}
+
+.shop-round-tab:hover {
+  background: rgba(36, 82, 54, 0.9);
+  color: #eaffef;
+}
+
+.shop-round-tab.active {
+  background: linear-gradient(180deg, #58c07f, #2f8b56);
+  border-color: #7fe0a4;
+  color: #08170f;
+  box-shadow: 0 0 14px rgba(88, 192, 127, 0.45);
+}
+
+.shop-round-top-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.shop-round-timer {
+  font-size: 20px;
+  font-weight: 800;
+  color: #d8ffe4;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 12px rgba(120, 240, 160, 0.5);
+}
+
+.shop-round-timer.urgent {
+  color: #ff9a9a;
+  text-shadow: 0 0 12px rgba(255, 90, 90, 0.55);
+}
+
+.shop-round-close {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid rgba(150, 235, 175, 0.35);
+  background: rgba(10, 26, 18, 0.7);
+  color: #bfe6cc;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.shop-round-close:hover {
+  background: rgba(60, 24, 24, 0.85);
+  border-color: rgba(255, 130, 130, 0.5);
+  color: #ffd9d9;
+}
+
+/* ---- 主体：左立绘 / 右货架 ---- */
+.shop-round-body {
+  display: flex;
+  gap: 18px;
+  padding: 16px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.shop-round-left {
+  flex: 0 0 268px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(120, 220, 150, 0.22);
+  background: radial-gradient(120% 80% at 50% 12%, rgba(52, 108, 72, 0.55), rgba(10, 24, 17, 0.9));
+}
+
+.shop-round-npc {
+  width: 100%;
+  max-height: 330px;
+  object-fit: contain;
+  object-position: bottom center;
+  filter: drop-shadow(0 8px 22px rgba(0, 0, 0, 0.55));
+}
+
+.shop-round-npc-name {
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  color: #9ff0bd;
+}
+
+.shop-round-npc-line {
+  font-size: 12px;
+  line-height: 1.7;
+  color: #a9cbb6;
+  text-align: center;
+  min-height: 34px;
+}
+
+.shop-round-right {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.shop-round-slots {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  align-content: start;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 2px;
+}
+
+/* 一个货架格 */
+.shop-round-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(130, 225, 160, 0.3);
+  background: linear-gradient(180deg, rgba(30, 64, 44, 0.85), rgba(14, 32, 23, 0.9));
+  cursor: pointer;
+  transition: transform 0.12s, border-color 0.12s, box-shadow 0.12s;
+}
+
+.shop-round-slot:hover {
+  transform: translateY(-2px);
+  border-color: rgba(160, 245, 190, 0.7);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+}
+
+/* 买不起：整格压暗 + 价格变红 */
+.shop-round-slot.unaffordable {
+  opacity: 0.5;
+}
+
+.shop-round-slot.unaffordable .shop-round-price {
+  color: #ff8f8f;
+}
+
+/* 已售出：留着空位（不重排，免得手指点错格） */
+.shop-round-slot.sold {
+  opacity: 0.28;
+  cursor: default;
+  pointer-events: none;
+}
+
+.shop-round-slot.empty {
+  opacity: 0.3;
+  cursor: default;
+  pointer-events: none;
+  border-style: dashed;
+}
+
+.shop-round-slot-name {
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.3;
+  text-align: center;
+  color: #e6fff0;
+  /* 名字可能两行，超了就省略 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.shop-round-slot-kind {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: #8fc7a5;
+}
+
+.shop-round-price {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--gold);
+  font-variant-numeric: tabular-nums;
+}
+
+.shop-round-price::before {
+  content: '◎ ';
+  opacity: 0.85;
+}
+
+/* 货架格里的图标（藏品图标 / 干员立绘） */
+.shop-round-slot-icon {
+  width: 62px;
+  height: 62px;
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 20, 14, 0.75);
+  border: 1px solid rgba(140, 230, 170, 0.22);
+}
+
+.shop-round-slot-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.shop-round-slot-icon.fallback {
+  font-size: 22px;
+  font-weight: 800;
+  color: #0c1a12;
+}
+
+/* 「卖出 +N」按钮（只出现在售卖页） */
+.shop-round-sell-btn {
+  margin-top: 2px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 215, 94, 0.45);
+  background: rgba(60, 48, 12, 0.7);
+  color: var(--gold);
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+
+.shop-round-sell-btn:hover {
+  background: rgba(96, 78, 20, 0.9);
+}
+
+/* 售卖页的"没有可卖的"空状态（单独样式 —— 别复用货架格的 .empty，那个 opacity 0.3） */
+.shop-round-empty {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 120px;
+  border-radius: 10px;
+  border: 1px dashed rgba(130, 225, 160, 0.35);
+  background: rgba(12, 28, 20, 0.6);
+  color: #bfe6cc;
+}
+
+/* ---- 下方：金币 + 刷新 ---- */
+.shop-round-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(120, 220, 150, 0.18);
+}
+
+.shop-round-gold {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--gold);
+  font-variant-numeric: tabular-nums;
+}
+
+.shop-round-btn {
+  padding: 8px 18px;
+  border-radius: 8px;
+  border: 1px solid rgba(160, 245, 190, 0.5);
+  background: linear-gradient(180deg, #3f9c68, #24704a);
+  color: #eafff1;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+
+.shop-round-btn:hover {
+  filter: brightness(1.15);
+}
+
+.shop-round-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+  filter: none;
+}
+
+.shop-round-foot-btns {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 「结束商店」是次要动作 —— 做成描边款，别和「刷新」抢注意力 */
+.shop-round-btn.ghost {
+  background: rgba(10, 26, 18, 0.6);
+  border-color: rgba(150, 235, 175, 0.45);
+  color: #bfe6cc;
+}
+
+.shop-round-btn.ghost:hover {
+  background: rgba(36, 82, 54, 0.9);
+  color: #eaffef;
+}
+
+.shop-round-hint {
+  font-size: 11px;
+  color: #8fc7a5;
+  text-align: center;
+  line-height: 1.6;
+}
+
+/* ---- 金币上方那个开关按钮 ---- */
+.shop-round-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 7px 10px;
+  margin-bottom: 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(160, 245, 190, 0.55);
+  background: linear-gradient(180deg, #3f9c68, #24704a);
+  color: #eafff1;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  box-shadow: 0 0 16px rgba(88, 192, 127, 0.35);
+}
+
+.shop-round-toggle:hover {
+  filter: brightness(1.15);
+}
+
+.shop-round-toggle-icon {
+  font-size: 14px;
+}
+
+.shop-round-toggle-timer {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(6, 18, 12, 0.6);
+  color: #d8ffe4;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ============================================================
+   ★ 0.3 房间设置（房主 DIY 本局规则）
+   ============================================================
+   面板结构见 index.html 的 #settings-overlay；内容由 main.ts 的
+   renderSettingsPanel() 按 shared 的 ROOM_SETTINGS_LIMITS 现生成 ——
+   这里的样式只管"长什么样"，不管"有什么项"。
+   ============================================================ */
+
+/* 大厅右上角的入口。只有房主看得到（.hidden 由 JS 控制） */
+.lobby-settings-btn {
+  position: absolute;
+  top: 20px;
+  right: 24px;
+  z-index: 2;
+}
+
+/* 大厅里给所有人看的那行"这局改了什么"（全是默认值时整行隐藏） */
+.lobby-rules {
+  max-width: 540px;
+  font-size: 12px;
+  line-height: 1.7;
+  letter-spacing: 0.04em;
+  text-align: center;
+  color: var(--gold);
+}
+
+/*
+  ★ 这张卡片的外观要**自己写全**：`.detail-card` 只是个没样式的空类名
+  （项目里只有 `.confirm-card` 才是真正给弹窗上背景/圆角的那一条）。
+  直接复用 `.confirm-card` 也不行 —— 它把宽度锁在 400px 并且 text-align:center，
+  对"左边标题、右边输入框"的设置行是错的。
+*/
+.settings-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: min(540px, 92vw);
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+  padding: 24px 26px;
+  text-align: left;
+  background: rgba(16, 20, 34, 0.97);
+  border: 1px solid var(--panel-border);
+  border-radius: 16px;
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.7);
+}
+
+.settings-hint {
+  font-size: 12px;
+  line-height: 1.75;
+  color: var(--text-dim);
+}
+.settings-hint b {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.settings-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/*
+  一行设置：左边"标题 + 一句说明"，右边控件。
+  用 grid 而不是 flex 是为了让控件同时垂直居中于两行文字。
+*/
+.settings-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 4px 14px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+}
+
+.settings-row-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.settings-row-hint {
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--text-dim);
+}
+
+.settings-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  /* 控件跨两行，视觉上和左侧整块对齐 */
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
+.settings-input-wrap input[type='number'] {
+  width: 106px;
+  text-align: right;
+  /* 数字等宽，改数值时不会左右跳（见 MEMORY 里 tabular-nums 那条） */
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-row-suffix {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* 开关行：和数值行同一套外观，只是右边换成 checkbox */
+.settings-row input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* 恢复了默认 / 服务端夹了范围之类的提示；错误时用 .bad 变红 */
+.settings-note {
+  min-height: 16px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+.settings-note.bad {
+  color: var(--danger);
+}
+
+/* ============================================================
+   ★★ 0.3.2 阿米娅升变任务（进度条 / 专用栏位 / 二选一弹窗）
+   ------------------------------------------------------------
+   颜色一律走主题变量（--accent / --text-dim / --panel-border），
+   这样 0.3 的方舟皮肤层（theme-ark.css）一换，这一块自动跟着变。
+   ============================================================ */
+
+/* ---- 日志面板里那条常驻进度 ---- */
+.amiya-quest {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 2px 2px 4px;
+}
+
+.quest-line {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.quest-line-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: 0.02em;
+}
+
+.quest-line-percent {
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+}
+
+/* 进度条本体：3px 细线，和 0.3 的"横向状态线"语汇一致 */
+.quest-bar {
+  height: 3px;
+  background: rgba(120, 150, 220, 0.16);
+  overflow: hidden;
+}
+
+.quest-bar > i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.25s ease;
+}
+
+/* 完成的那几行整行转成高亮色（一眼看出"这一条已经过了"） */
+.quest-line.done .quest-line-head,
+.quest-line.done .quest-line-percent {
+  color: var(--accent);
+}
+
+/* ---- 日志里的任务提示行 ---- */
+.log-line.amiya-quest-line {
+  color: var(--accent);
+}
+
+/* ---- 升变之证专用栏位（3 格，和穿戴藏品那 10 格是两套容量） ---- */
+.item-cert-block.hidden {
+  display: none;
+}
+
+.item-slots-cert {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.item-slots-cert .item-slot {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+/* ---- 一阶段达成的二选一弹窗 ---- */
+.cert-choice-card {
+  max-width: 620px;
+}
+
+.cert-choice-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.cert-choice-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 14px 10px;
+  background: rgba(20, 26, 44, 0.8);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  color: var(--text);
+  cursor: pointer;
+  text-align: center;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.cert-choice-btn:hover {
+  border-color: var(--accent);
+  background: rgba(30, 38, 60, 0.9);
+}
+
+.cert-choice-icon img {
+  display: block;
+  width: 56px;
+  height: 56px;
+  object-fit: contain;
+}
+
+.cert-choice-name {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.cert-choice-desc {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+
+/* ============================================================
+   ★★★ 0.3.3 界面重排（用户口径）
+   ------------------------------------------------------------
+   一、房间等待界面：从"散落一列"改成**有框的面板**（和设置面板 / 盟约页同一套骨架）
+   二、音乐控制台：分区 + 进度条（风格靠拢对局界面那套"小标签 + 细线"）
+   三、零碎补丁
+   ★ 主界面 / 头像浮层的布局不在这里 —— 它们改在原地（见文件前半段的注释）。
+   ============================================================ */
+
+/* ------------------------------------------------------------
+   一、房间等待界面
+   ------------------------------------------------------------
+   面板骨架：head（标题 + 房间设置）→ 房间号信息条 → body（左玩家 / 右规则）→ foot（状态 + 按钮）。
+   ★ `min(920px, 94vw)`：8 个人一行一行排开也不会把按钮挤到屏幕外；
+     再宽的话玩家名字和头像之间会空出一大片。
+   ------------------------------------------------------------ */
+.lobby-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: min(920px, 94vw);
+  max-height: calc(100vh - 64px);
+  padding: 20px 22px;
+  border-radius: var(--radius);
+  background: var(--panel-solid);
+  border: 1px solid var(--panel-border);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.66);
+}
+
+.lobby-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.lobby-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+/* 眉标：和主界面那个 .menu-kicker 同一套写法（小号 + 大字距 + 灰） */
+.lobby-kicker {
+  font-size: 9.5px;
+  letter-spacing: 0.4em;
+  color: var(--text-dim);
+  opacity: 0.7;
+  text-transform: uppercase;
+  margin-right: -0.4em;
+}
+
+.lobby-title {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  color: var(--text);
+}
+
+.lobby-sub {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+/* 房间号信息条：横向一条，不再是"占掉半屏的巨型数字" */
+.lobby-code-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.lobby-code-label,
+.lobby-code-hint {
+  font-size: 9.5px;
+  letter-spacing: 0.22em;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.lobby-code-hint {
+  margin-left: auto;
+  letter-spacing: 0.08em;
+  opacity: 0.8;
+}
+
+/* 覆盖原来那个 44px 的巨型房间号：在信息条里 26px 就够读了 */
+#lobby-overlay .lobby-code-big {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 0.26em;
+  margin: 0;
+  padding: 0 4px;
+  text-shadow: none;
+  border-radius: var(--radius);
+}
+
+.lobby-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
+  gap: 14px;
+  min-height: 0;
+  flex: 1;
+}
+
+.lobby-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  min-height: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.lobby-col-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* 栏目标题：和对局左栏「羁绊」那种小号大写标签同一档 */
+.lobby-col-title {
+  font-size: 9.5px;
+  letter-spacing: 0.24em;
+  color: var(--text-dim);
+}
+
+.lobby-count {
+  font-size: 11px;
+  color: var(--text);
+  letter-spacing: 0.08em;
+}
+
+/*
+  玩家列表：从 240px 顶死的矮条，改成"吃掉左栏剩余高度"。
+  ★ 8 人满编时一行约 44px ⇒ 352px，给到 420px 就不需要滚了。
+*/
+#lobby-overlay .lobby-players {
+  width: 100%;
+  max-height: none;
+  flex: 1;
+  min-height: 120px;
+  max-height: 420px;
+  margin: 0;
+  gap: 6px;
+}
+
+/* 规则栏：默认时是灰的（没什么可说的），改过规则才用金币色 */
+.lobby-rules {
+  max-width: none;
+  font-size: 12px;
+  line-height: 1.7;
+  letter-spacing: 0.04em;
+  text-align: left;
+  color: var(--gold);
+}
+
+.lobby-rules.is-default {
+  color: var(--text-dim);
+}
+
+.lobby-side-hint {
+  margin-top: auto;
+  font-size: 10.5px;
+  line-height: 1.65;
+  color: var(--text-dim);
+  opacity: 0.72;
+}
+
+.lobby-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--panel-border);
+}
+
+/* 状态文字在底部靠右，和按钮同一侧 —— 以前它在页面正中，离按钮很远 */
+#lobby-overlay .menu-status {
+  max-width: none;
+  text-align: right;
+  white-space: pre-line;
+}
+
+#lobby-overlay .overlay-buttons {
+  justify-content: flex-end;
+}
+
+/* 房间设置按钮现在是 head 里的普通按钮（原来 absolute 定位在右上角） */
+.lobby-settings-btn {
+  position: static;
+  flex: none;
+  padding: 7px 14px;
+  font-size: 11.5px;
+  letter-spacing: 0.14em;
+}
+
+/*
+  ★ 0.3.3：人机那一行。
+  `.net-input` 的默认宽度是 100%，放进这一行会把下拉拉成一整条、
+  把「添加人机」挤到最右边 —— 看起来像两个不相干的东西。
+  这里把它收成"和字号一样长"的一小截，按钮紧挨着它。
+*/
+#lobby-overlay .lobby-bot-add {
+  margin: 0;
+  justify-content: flex-start;
+}
+
+#lobby-overlay .lobby-bot-add .lobby-bot-select {
+  flex: none;
+  width: auto;
+  min-width: 96px;
+  padding: 6px 8px;
+  font-size: 11.5px;
+  border-radius: var(--radius);
+}
+
+/* 窄屏：规则栏收到下面去 */
+@media (max-width: 760px) {
+  .lobby-body {
+    grid-template-columns: 1fr;
+  }
+
+  .lobby-wrap {
+    padding: 16px;
+  }
+}
+
+/* ------------------------------------------------------------
+   二、音乐控制台
+   ------------------------------------------------------------
+   分区写法：每一块上面一行 .music-block-label（9.5px / 大字距 / 灰），
+   和对局界面的 .stat-label、大厅的 .lobby-col-title 完全一致。
+   ------------------------------------------------------------ */
+.music-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  /*
+    ★ 306px 是 0.2 那一版的宽度，只够"三个图标 + 一行时间"。
+    现在多了可拖进度条和两个模式键，336px 才不至于让模式键换行。
+    （面板的落点由 main.ts 按按钮矩形算，宽一点不影响定位）
+  */
+  width: 336px;
+}
+
+.music-head {
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.music-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.music-block-label {
+  font-size: 9.5px;
+  letter-spacing: 0.24em;
+  color: var(--text-dim);
+}
+
+/* 曲名：一行，超出省略（专辑名经常很长） */
+.music-current {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 进度条：细、方、强调色填充（和羁绊进度条同一种"状态线"语言） */
+.music-seek {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 3px;
+  margin: 4px 0;
+  padding: 0;
+  background: var(--panel-border);
+  border: 0;
+  border-radius: 0;
+  cursor: pointer;
+}
+
+.music-seek::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 10px;
+  height: 14px;
+  border-radius: 0;
+  background: var(--accent);
+  border: 0;
+  cursor: pointer;
+}
+
+.music-seek::-moz-range-thumb {
+  width: 10px;
+  height: 14px;
+  border-radius: 0;
+  background: var(--accent);
+  border: 0;
+  cursor: pointer;
+}
+
+.music-progress-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.music-state {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: var(--text-dim);
+}
+
+/* 走带行：三颗控制键 + 右侧一句说明 */
+.music-transport {
+  align-items: center;
+  gap: 8px;
+}
+
+.music-transport-hint {
+  margin-left: auto;
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  color: var(--text-dim);
+  opacity: 0.72;
+}
+
+/*
+  ★ 0.3.3：随机 / 循环单独一行（原本和走带挤在一起，"列表循环"会被压成两行）。
+  两等分 —— 将来再加一个模式键也不用改布局。
+*/
+.music-modes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.music-mode-btn,
+.music-icon-btn {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* 模式键不再带 emoji，字号跟着"小标签"那一档走 */
+.music-mode-btn {
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+}
+
+.music-volume-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* 音量滑杆也改成细方条（和进度条同一种） */
+.music-volume {
+  flex: 1;
+  height: 3px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--panel-border);
+  border-radius: 0;
+  cursor: pointer;
+}
+
+.music-volume::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 10px;
+  height: 14px;
+  border-radius: 0;
+  background: var(--text);
+  border: 0;
+  cursor: pointer;
+}
+
+.music-volume::-moz-range-thumb {
+  width: 10px;
+  height: 14px;
+  border-radius: 0;
+  background: var(--text);
+  border: 0;
+  cursor: pointer;
+}
+
+/* ------------------------------------------------------------
+   三、零碎补丁
+   ------------------------------------------------------------ */
+/* 头像墙：圆角跟皮肤（0.3 是 2px） */
+.avatar-grid {
+  border-radius: var(--radius);
+  /*
+    ★ 0.3.3：面板从"右侧常驻栏"变成"居中浮层"之后，头像墙必须自己限高 ——
+    否则 200 多张头像会把卡片顶出屏幕（卡片只有 max-height，
+    里面的可滚动区域得有明确上限才会真的出现滚动条）。
+  */
+  max-height: min(52vh, 470px);
+}
+
+/* 选中的头像：把 0.2 那圈蓝色外发光换成强调色（皮肤层里 --accent 是荧光黄绿） */
+.avatar-option.selected {
+  box-shadow: 0 0 0 2px var(--accent), 0 0 14px rgba(201, 250, 67, 0.35);
+}
+
+/*
+  ★ 0.3.3：`.menu-hint` 原来是给"按钮下面那行居中说明"用的（text-align:center），
+  但设置 / 建房 / 加入这几个面板里也复用了它 —— 面板是左对齐的信息块，
+  说明文字跟着居中会让标签和正文错开。这里只把面板内的拉回左对齐。
+*/
+.menu-panel .menu-hint {
+  text-align: left;
+}
+
+/* ============================================================
+   ★★ 0.3.3 局域网房间列表（加入房间页）
+   ------------------------------------------------------------
+   自动搜索、已开局的也列出来（只是点不进去）。
+   视觉上和房间等待页的"玩家名单"同一套：发丝线 + 等宽房间号 + 右侧一颗小按钮。
+   ============================================================ */
+
+/* 带列表的加入面板要宽一点：房间号 + 房主 + 人数状态 + 按钮，360px 塞不下 */
+.menu-panel-wide {
+  width: min(460px, 92vw);
+}
+
+.lan-rooms {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lan-rooms-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+/* 和 .lobby-col-title 同一档：小号 + 大字距 + 灰 */
+.lan-rooms-title {
+  font-size: 9.5px;
+  letter-spacing: 0.24em;
+  color: var(--text-dim);
+}
+
+.lan-rooms-state {
+  margin-left: auto;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+.lan-rooms-state.error {
+  color: var(--danger);
+}
+
+.lan-rooms-refresh {
+  flex: none;
+  padding: 3px 9px;
+  font-family: inherit;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.lan-rooms-refresh:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.lan-rooms-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  /* 房间多了自己滚（约 4 行的高度），别把下面的输入框顶出屏幕 */
+  max-height: 216px;
+  overflow-y: auto;
+}
+
+/*
+  一行房间。
+  ★ 左侧 2px 竖条就是"能不能进"：荧光 = 可加入，金 = 这里有我的座位，灰 = 点不进去。
+    和羁绊列表、房间号信息条用的是同一种"色条"语汇。
+*/
+.lan-room {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--panel-border);
+  border-left: 2px solid var(--accent);
+  border-radius: var(--radius);
+}
+
+.lan-room.dim {
+  border-left-color: var(--panel-border);
+  /* 点不进去的行压暗，但**不能压到看不清** —— 玩家正是要看清"为什么进不去" */
+  opacity: 0.74;
+}
+
+.lan-room.mine {
+  border-left-color: var(--gold);
+}
+
+.lan-room-code {
+  flex: none;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  color: var(--text);
+}
+
+.lan-room-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.lan-room-host {
+  font-size: 11.5px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lan-room-meta {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+
+.lan-room-btn {
+  flex: none;
+  /* 按钮/灰章都不许折行：折了就变成"两个字的方块"，看着像坏了 */
+  white-space: nowrap;
+  padding: 5px 12px;
+  font-family: inherit;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: #0b0c0e;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.lan-room-btn:hover {
+  filter: brightness(1.12);
+}
+
+/* 「回到对局」用金币色：它和"新加入"是两件不同的事，别长得一样 */
+.lan-room-btn.resume {
+  color: #0b0c0e;
+  background: var(--gold);
+  border-color: var(--gold);
+}
+
+/* 不可点的原因（已开局 / 已满 / 版本不同）：一颗灰章，不是按钮 */
+.lan-room-lock {
+  flex: none;
+  white-space: nowrap;
+  padding: 4px 9px;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: var(--text-dim);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+}
+
+.lan-rooms-empty {
+  padding: 12px 10px;
+  font-size: 11px;
+  line-height: 1.75;
+  text-align: center;
+  color: var(--text-dim);
+  border: 1px dashed var(--panel-border);
+  border-radius: var(--radius);
+}
+
+/* 「或者直接填房间号」：两边各一条发丝线，把两种进房方式分开 */
+.lan-rooms-or {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 9.5px;
+  letter-spacing: 0.2em;
+  color: var(--text-dim);
+}
+.lan-rooms-or::before,
+.lan-rooms-or::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--panel-border);
+}
+
+/* ============================================================
+   二十、0.3.4 图鉴 + 组队器
+   ============================================================
+   【分工】这一节只管**布局与结构**（尺寸、定位、滚动、栅格）；
+   颜色 / 圆角 / 描边 / 发光一律写在 theme-ark.css 的「二十」，别在这里写十六进制。
+   ============================================================ */
+
+/* ---- 入口按钮（羁绊列表下方）----
+   它和羁绊是同一类信息，但**不能抢戏**：细边框 + 小字，不做成主按钮。 */
+.codex-open-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px 8px;
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.codex-open-btn:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+/* ★ 0.3.4：按钮前面那个「册」字已经删掉（用户口径：只要「图鉴」两个字） */
+
+/* ---- 大弹窗：外层遮罩 + 内层卡片 ----
+   和头像选择器同一套：外层负责"点外面关闭"，内层才是面板。 */
+.codex-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.codex-card {
+  display: flex;
+  flex-direction: column;
+  width: min(1120px, 96vw);
+  /*
+    ★ 0.3.4：`max-height` 改成**确定高度**。
+    只写 max-height 时面板高度由内容撑开 ⇒ `.tb-wrap` 的 `height:100%` 解析成 auto，
+    组队器右边那三块（栏位 / 羁绊 / 脚注）就分不到"剩余空间"，
+    `.tb-traits` 的 `flex:1` 成了摆设（实测卡在 144px，15 行羁绊只能看 4 行）。
+    定高之后三个视图都是同一个面板尺寸，切页也不再跳一下。
+  */
+  height: min(88vh, 880px);
+  max-height: min(88vh, 880px);
+  padding: 16px 18px 18px;
+  background: var(--panel-solid);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.72);
+}
+
+.codex-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--panel-border);
+}
+.codex-title {
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+}
+.codex-sub {
+  margin-top: 4px;
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+.codex-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+}
+.codex-count {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+}
+.codex-close-btn {
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.codex-close-btn:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+/* ---- 主体：左 rail + 右内容 ---- */
+.codex-body {
+  display: flex;
+  gap: 14px;
+  margin-top: 12px;
+  flex: 1;
+  min-height: 0;
+}
+.codex-rail {
+  flex: none;
+  width: 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.codex-rail-btn {
+  padding: 9px 10px;
+  text-align: left;
+  font-size: 11.5px;
+  letter-spacing: 0.14em;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.codex-rail-btn:hover {
+  color: var(--text);
+}
+.codex-rail-btn.active {
+  color: var(--text);
+  font-weight: 700;
+}
+.codex-main {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+/* ---- 分组标题 ---- */
+.codex-group + .codex-group {
+  margin-top: 16px;
+}
+.codex-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid var(--panel-border);
+}
+.codex-group-title {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+}
+.codex-group-count {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-dim);
+}
+.codex-group-note {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+/* ---- 棋子卡 / 藏品卡 ---- */
+.codex-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(178px, 1fr));
+  gap: 8px;
+}
+.codex-unit {
+  display: flex;
+  gap: 8px;
+  padding: 7px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.02);
+  /*
+    ★★ 0.3.4 修「棋子墙参差不齐」：技能描述长短差很多（1 行 ~ 11 行），
+    以前卡片高度完全跟着文字走 —— 实测同一屏里 55 张卡有 **10 种不同高度**
+    （167 ~ 311px），网格一行高一行低，看着像没排过版。
+    现在：卡片高度锁死 + 描述最多 5 行（`-webkit-line-clamp`），
+    完整文案放在 `title` 里（buildCodexUnitCard 上挂的），鼠标停一下就看得全。
+  */
+  height: 182px;
+  overflow: hidden;
+}
+.codex-unit-portrait {
+  flex: none;
+  width: 44px;
+  height: 58px;
+  object-fit: contain;
+  background: #0d0f12;
+  border: 1px solid var(--panel-border);
+}
+.codex-unit-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.codex-unit-name {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.codex-unit-cost {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+}
+.codex-unit-traits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+.codex-unit-trait {
+  padding: 1px 5px;
+  font-size: 9.5px;
+  color: var(--text-dim);
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+}
+.codex-unit-skill {
+  font-size: 10px;
+  line-height: 1.6;
+  color: var(--text-dim);
+  /* ★ 最多 5 行（和上面 .codex-unit 的固定高度配对）；全文见卡片 title */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+  overflow: hidden;
+}
+.codex-unit-skill b {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.codex-item {
+  display: flex;
+  gap: 8px;
+  padding: 7px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.02);
+}
+.codex-item-icon {
+  flex: none;
+  width: 38px;
+  height: 46px;
+  object-fit: contain;
+  background: #0d0f12;
+  border: 1px solid var(--panel-border);
+}
+.codex-item-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.codex-item-name {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.codex-item-desc {
+  font-size: 10px;
+  line-height: 1.65;
+  color: var(--text-dim);
+}
+
+/* ---- 组队器：左棋子 / 右 15 栏位 ---- */
+.tb-wrap {
+  display: flex;
+  gap: 12px;
+  height: 100%;
+  min-height: 0;
+}
+.tb-left {
+  /*
+    ★ 0.3.4：312 → 380。原来 312px 里 `minmax(72px,1fr)` 只排得下 **3 列**，
+    55 个棋子要滚 1859px（三屏多）；右边 15 个栏位却占满 644px。
+    加宽到 380 ⇒ 4 列，滚动量少三分之一，两边终于平衡。
+  */
+  flex: none;
+  width: 380px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.tb-left-head {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  color: var(--text-dim);
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--panel-border);
+}
+.tb-left-list {
+  flex: 1;
+  overflow-y: auto;
+  padding-top: 8px;
+  padding-right: 3px;
+}
+.tb-unit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 6px;
+}
+.tb-unit {
+  padding: 4px 3px 3px;
+  text-align: center;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.02);
+  cursor: pointer;
+}
+.tb-unit:hover {
+  filter: brightness(1.25);
+}
+.tb-unit img {
+  display: block;
+  width: 100%;
+  height: 56px;
+  object-fit: contain;
+}
+.tb-unit-name {
+  font-size: 9.5px;
+  letter-spacing: 0.02em;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tb-unit.picked .tb-unit-name {
+  color: var(--text);
+}
+
+/* 左侧棋子的分组头（1~5 费）：栅格里要横跨整行 */
+.tb-unit-group-head {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 8px;
+  padding-bottom: 3px;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--panel-border);
+}
+.tb-unit-group-head:first-child {
+  margin-top: 0;
+}
+
+.tb-right {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.tb-right-head {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  color: var(--text-dim);
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--panel-border);
+}
+/* ★ 15 个栏位：5 列 × 3 行。写死 5 列是因为 15 = 5×3 排出来最方整
+   ★ 0.3.4：限宽 560。不限宽时每格被撑到 124×165，三行就吃掉 495px，
+     下面"激活的羁绊"只剩 2 行可看 —— 而羁绊表才是组队器的正事。 */
+.tb-slots {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+  margin-top: 8px;
+  max-width: 520px;
+}
+.tb-slot {
+  position: relative;
+  aspect-ratio: 3 / 4;
+  border: 1px dashed var(--panel-border);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.015);
+  cursor: pointer;
+}
+.tb-slot.filled {
+  border-style: solid;
+  background: rgba(255, 255, 255, 0.04);
+}
+.tb-slot img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  padding: 2px;
+}
+.tb-slot-name {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 2px;
+  font-size: 9px;
+  text-align: center;
+  color: var(--text-dim);
+  background: rgba(0, 0, 0, 0.55);
+}
+.tb-slot-index {
+  position: absolute;
+  top: 2px;
+  left: 3px;
+  font-family: var(--mono);
+  font-size: 8.5px;
+  color: var(--text-dim);
+  opacity: 0.65;
+}
+
+.tb-traits-head {
+  margin-top: 12px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  color: var(--text-dim);
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--panel-border);
+}
+.tb-traits {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  /* ★ 0.3.4：吃掉栏位区剩下的高度（以前写死 168，明明有空位却只显示 2 行就要滚） */
+  flex: 1 1 0;
+  min-height: 84px;
+  overflow-y: auto;
+}
+.tb-trait-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 7px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+}
+.tb-trait-row img {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+}
+.tb-trait-name {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+.tb-trait-desc {
+  font-size: 9.5px;
+  color: var(--text-dim);
+}
+.tb-trait-count {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  flex: none;
+}
+.tb-traits-empty {
+  margin-top: 6px;
+  padding: 10px;
+  font-size: 10px;
+  line-height: 1.7;
+  text-align: center;
+  color: var(--text-dim);
+  border: 1px dashed var(--panel-border);
+  border-radius: var(--radius);
+}
+
+/* 右下角：说明 + 提醒购买开关 */
+.tb-foot {
+  margin-top: auto;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 10px;
+}
+.tb-note {
+  font-size: 9.5px;
+  line-height: 1.7;
+  color: var(--text-dim);
+}
+.tb-toggle {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 9px;
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.tb-toggle:hover {
+  color: var(--text);
+}
+/* 开关那个小滑块：纯结构，颜色在皮肤层 */
+.tb-switch {
+  position: relative;
+  flex: none;
+  width: 26px;
+  height: 14px;
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+}
+.tb-switch::after {
+  content: '';
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  transition: transform 0.12s ease;
+}
+.tb-toggle.on .tb-switch::after {
+  transform: translateX(12px);
+}
+
+/* ---- 商店卡「计划」角标 ----
+   ★ 位置选**左下**：右上已被「已拥有 / 可升星」占了，右下是牌库剩余，
+   左边那条 3px 竖条是稀有度色条 —— 所以从 6px 起，避开它。 */
+.shop-plan-badge {
+  position: absolute;
+  left: 6px;
+  bottom: 3px;
+  z-index: 3;
+  padding: 1px 5px;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+/* ============================================================
+   ★ 0.3.4 新手教程
+   ============================================================
+   入口是主界面**右上角一颗很小的「?」**（用户口径），
+   面板本身是"一屏一页"的翻页式，每页只说一件事。
+   ============================================================ */
+/* ★ 0.3.4：主界面右上角一小簇 —— 版本号 + 教程入口（用户口径：版本号在教程旁边） */
+.menu-corner {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.app-version {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  opacity: 0.55;
+  user-select: text;
+  white-space: nowrap;
+}
+
+.tutorial-open-btn {
+  position: static;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--panel-border);
+  border-radius: 50%;
+  opacity: 0.55;
+  cursor: pointer;
+  transition: 0.15s;
+}
+
+.tutorial-open-btn:hover {
+  opacity: 1;
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.tutorial-card {
+  display: flex;
+  flex-direction: column;
+  width: min(720px, 92vw);
+  /* ★ 定高：翻页时面板不能一会高一会矮（内容长短不一样） */
+  height: min(560px, 86vh);
+  padding: 16px 20px 14px;
+  background: var(--panel-solid);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.72);
+}
+
+.tutorial-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.tutorial-title {
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+}
+
+.tutorial-sub {
+  margin-top: 3px;
+  font-size: 10.5px;
+  color: var(--text-dim);
+}
+
+.tutorial-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+}
+
+.tutorial-step {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+}
+
+.tutorial-close-btn {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.tutorial-close-btn:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.tutorial-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 2px 6px;
+  font-size: 12.5px;
+  line-height: 1.85;
+  color: var(--text-dim);
+}
+
+.tutorial-body h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--text);
+}
+
+.tutorial-body p {
+  margin: 0 0 9px;
+}
+
+.tutorial-body b {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.tutorial-body ul {
+  margin: 0 0 9px;
+  padding-left: 18px;
+}
+
+.tutorial-body li {
+  margin-bottom: 5px;
+}
+
+.tutorial-body .tut-key {
+  display: inline-block;
+  min-width: 18px;
+  padding: 0 5px;
+  margin: 0 1px;
+  font-family: var(--mono);
+  font-size: 11px;
+  text-align: center;
+  color: var(--text);
+  background: #1e2634;
+  border: 1px solid #2c3648;
+  border-radius: 3px;
+}
+
+.tutorial-body .tut-note {
+  margin: 10px 0 0;
+  padding: 7px 10px;
+  font-size: 11.5px;
+  line-height: 1.7;
+  color: var(--text-dim);
+  background: rgba(255, 255, 255, 0.03);
+  border-left: 2px solid var(--accent);
+}
+
+.tutorial-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--panel-border);
+}
+
+.tutorial-dots {
+  display: flex;
+  gap: 5px;
+}
+
+.tutorial-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--panel-border);
+  transition: 0.15s;
+}
+
+.tutorial-dot.on {
+  background: var(--accent);
+  transform: scale(1.35);
+}
+
+.tutorial-buttons {
+  display: flex;
+  gap: 8px;
+}

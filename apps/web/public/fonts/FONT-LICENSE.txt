@@ -1,0 +1,36 @@
+思源黑体 / Noto Sans SC
+================================================================
+
+本目录的 NotoSansSC.woff2 由 Noto Sans SC（可变字体）子集化而来，
+只保留本工程用到的字符（GB2312 全集 + 源码里出现的所有字）。
+
+版权
+----------------------------------------------------------------
+© 2014-2021 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'.
+Source is a trademark of Adobe in the United States and/or other countries.
+
+许可
+----------------------------------------------------------------
+This Font Software is licensed under the SIL Open Font License, Version 1.1.
+This Font Software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+CONDITIONS OF ANY KIND, either express or implied. See the SIL Open Font
+License for the specific language, permissions and limitations governing your
+use of this Font Software.
+
+OFL 1.1 全文：https://scripts.sil.org/OFL
+（字体自带的 name 表 nameID 13 / 14 就是上面这段声明和这个地址，未改动。）
+
+★ 分发前必做
+----------------------------------------------------------------
+OFL 要求「随字体一起分发许可全文」。本文件目前只写了声明和官方地址，
+**正式对外发布前请把官方 OFL.txt 原文放进本目录**（从
+https://scripts.sil.org/OFL 或 Noto 的 GitHub 仓库 LICENSE 文件取），
+文件名保持 `OFL.txt`。
+
+重新生成
+----------------------------------------------------------------
+改了界面文案、加了生僻字之后如果显示成方框，重跑：
+
+    python scripts/subset-font.py
+
+（脚本会重新扫一遍源码里出现的字符，再生成一次 woff2。）

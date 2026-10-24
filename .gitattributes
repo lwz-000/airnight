@@ -1,0 +1,23 @@
+* text=auto eol=lf
+
+# Windows 的启动脚本必须保留 CRLF，否则 cmd 解析会出问题
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# 二进制资源：别让 git 尝试做行尾转换或文本 diff
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.ico binary
+*.mp3 binary
+*.ogg binary
+*.wav binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.xlsx binary
+*.zip binary
+*.skel binary
+*.atlas binary

@@ -1,0 +1,10 @@
+{
+  "name": "@airnight/sim-cli",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "终端里跑一场战斗，用来验证内核和调数值",
+  "scripts": {
+    "start": "tsx src/main.ts"
+  }
+}

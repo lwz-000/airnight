@@ -1,0 +1,907 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>AIRNIGHT · 小人离线渲染</title>
+<!--
+  ============================================================
+   这个页面只在**构建期**被无头浏览器打开一次，用来把官方 Spine 小人
+   逐帧渲染成横向序列帧 PNG。它不会被打进游戏包。
+  ============================================================
+
+   【为什么要"离线预渲染"而不是把 Spine 运行时打进游戏】
+   见 apps/web/src/three/chibi.ts 开头那段说明：授权 + 版本兼容两条原因。
+   这里只补充实现层面的三点：
+
+   1. **画面必须可复现**：同一份 skel 渲染两次必须逐像素一致，
+      否则没法 diff、也没法缓存。所以这里不用真实时钟，而是
+      按「动画总时长 / 帧数」等间距采样，一次 update 到那个时刻。
+
+   2. **所有动作必须共用同一套取景**。
+      如果每帧各自居中，小人就会在框里"抖"——因为包围盒每帧都不一样。
+      所以先扫一遍所有要导出的动作，算出联合包围盒，
+      再把「包围盒的底边中点」对齐到「目标框的底边中点」，
+      之后所有帧都用这个固定变换渲染。小人就稳稳站在格子里。
+      这套取景是**在成品格子上迭代量出来的**，不是靠骨架自报的包围盒
+      （原因见下面 ★ 那两段：getLocalBounds 位置不可信，别的画布上量也不可信）。
+
+   3. **像素必须解预乘**。Pixi 的渲染目标是预乘 alpha 的，
+      gl.readPixels 拿到的就是预乘数据；直接当直通 alpha 用，
+      半透明边缘会发黑（一圈脏边）。所以这里在写进 ImageData 时
+      统一做一次除以 alpha 反预乘。
+-->
+<script src="/vendor/pixi.min.js"></script>
+<script src="/vendor/pixi-spine.js"></script>
+</head>
+<body>
+<script>
+/**
+ * 由 Node 侧注入：格子尺寸、采样帧率、帧数上限、边距等。
+ * 注入方式是把这个占位替换掉（连后面的 null 一起换），
+ * 所以这里**不能**再写一个默认对象 —— 替换后会变成两个对象字面量挨在一起，
+ * 直接语法错误、整个页面白屏。
+ */
+const CFG = /*__CFG__*/ null;
+
+window.__READY = false;
+window.__FATAL = null;
+// 页面里任何未捕获的错误都记下来，Node 侧好把它打出来（否则只有一句"页面没起来"）
+window.addEventListener('error', (e) => {
+  window.__FATAL = String((e && (e.message || e.error)) || 'error');
+});
+window.addEventListener('unhandledrejection', (e) => {
+  window.__FATAL = 'unhandledrejection: ' + String((e && e.reason) || '');
+});
+</script>
+<script>
+/* ============================================================
+   动作名匹配
+   ============================================================
+   官方动画命名毫无规律（实测阿米娅是
+   Attack / Attack_Begin / Attack_End / Default / Die / Idle /
+   Skill / Skill_2 / Skill_Begin / Skill_End / Start / Stun），
+   所以不能硬编码，只能"候选名按优先级试 + 前缀兜底"。
+   每一档都允许空：不存在的动作就不导出，游戏里自动跳过。
+*/
+const PRIORITY = {
+  idle: ['Idle', 'Default', 'Relax', 'Idle_1', 'Idle_Loop', 'Start'],
+  attack: ['Attack', 'Attack_1', 'Attack_Loop', 'Combat', 'Combat_1'],
+  skill: ['Skill', 'Skill_1', 'Skill_2', 'Skill_1_Loop', 'Skill2_Begin'],
+  die: ['Die', 'Die_1', 'Dead', 'Death'],
+  /*
+    ★ 0.0.3：**移动动作**（走过一格时播的那一套）。
+
+    【为什么优先选 Loop 那一条？】
+    官方把走路拆成三段：Move_Begin（起步，一次性）/ Move_Loop（迈步循环）/
+    Move_End（刹住，一次性）。我们的棋子是**一格一格挪**的，一次挪动只有
+    0.4 秒（8 tick），三段式根本串不完，中间会不断被下一格打断 ——
+    看起来像"抖"。所以只取**循环段**：它自己就是完整的一个迈步周期，
+    播多久都自然。（只给了单段 Move 的骨架就直接用它，见候选名单顺序。）
+
+    【没有这个动作的骨架怎么办？】
+    一个都匹配不上时这一档就是空 —— 清单里不写 move 键，
+    游戏那边自动退回"待机 + 程序化走动感"，不会崩也不会闪。
+    */
+  move: ['Move_Loop', 'Move', 'Run_Loop', 'Run', 'Walk', 'Move_1', 'Run_1', 'x_Move_Loop'],
+  /*
+    ★ 0.2（用户 2026-10-17）：「给所有干员加眩晕动画」。
+    官方素材里**只有一部分**干员带 Stun（阿米娅/迷迭香/维什戴尔/凯尔希/若叶睦…），
+    其余骨架根本搜不到 —— 那就**不写这一档**（manifest 里没有 stun 键），
+    游戏侧自动退回"待机 + 程序化摇晃"，不会崩也不会闪。
+  */
+  stun: ['Stun', 'Stun_Loop', 'StunLoop', 'Stun_1', 'Dizzy'],
+};
+
+/**
+ * 出手动作的**兜底**名单。
+ *
+ * 【为什么需要它？】
+ * 有极少数干员的官方骨架里**根本没有 Attack** —— 实测：
+ *   op39 谜图：Default, Die, Idle, Skill_1_Begin/Loop/End, Skill_2_*, Skill_3_*, Stun, Stun_Begin
+ *   op47 玛恩纳：Default, Die, Idle, Idle_2, Skill_1_Start/Loop/End, Skill_2_*, Skill_3_*, Start
+ * 那时候拿技能的"起手帧"当出手用。语义上不严谨，
+ * 但"打人的时候纹丝不动"是更糟的观感 —— 宁可动作不精确，也不能没反应。
+ */
+const ATTACK_FALLBACK = [
+  'Skill_1_Begin',
+  'Skill_1_Start',
+  'Skill_Begin',
+  'Skill_2_Begin',
+  'Skill_2_Start',
+  'Stun_Begin',
+  'Skill_1_Loop',
+  'Stun',
+];
+
+/**
+ * ★ 0.0.3：`move` 这一档的**排除词**。
+ *
+ * 【为什么需要？】
+ * 动作名匹配的最后一步是"包含匹配"，而有一类名字里带 Move 的**不是走路**：
+ *   op43 安洁莉娜（异格）：只有 `Skill_3_Move`（三技能飞行状态下的位移），
+ *   没有普通走路 —— 拿它当走路播，小人会一直保持"开技能飞着走"的姿势。
+ * 所以先把这些名字滤掉再匹配：宁可没有走路动作（退回程序化走姿），
+ * 也别把一个"技能位移"当成走路。
+ */
+const MOVE_EXCLUDES = [
+  'skill',
+  'attack',
+  'combat',
+  'die',
+  'revive',
+  'stun',
+  'takeoff',
+  'restart',
+  'interact',
+  'relax',
+  'sit',
+  'sleep',
+];
+
+function pickAnim(names, key) {
+  /*
+    走路只在"看着像走路"的名字里挑（见 MOVE_EXCLUDES）。
+    其余档位不受影响 —— 出手的兜底名单（ATTACK_FALLBACK）本来就要挑技能名。
+  */
+  const pool =
+    key === 'move'
+      ? names.filter((n) => !MOVE_EXCLUDES.some((bad) => n.toLowerCase().includes(bad)))
+      : names;
+  const lower = pool.map((n) => n.toLowerCase());
+  const tryList = (list) => {
+    // 先精确匹配，再前缀兜底（'Attack_Begin' 这种）
+    for (const cand of list) {
+      const i = lower.indexOf(cand.toLowerCase());
+      if (i >= 0) return pool[i];
+    }
+    for (const cand of list) {
+      const i = lower.findIndex((n) => n.startsWith(cand.toLowerCase()));
+      if (i >= 0) return pool[i];
+    }
+    /*
+      ★ 0.0.3：最后再试一次**包含**匹配。
+      敌人的骨架是"阶段_动作"的命名法，关键词在后面：
+        杰斯顿·威廉姆斯  C1_Idle / C1_Attack / C1_Skill / C2_Idle / ...
+        博卓卡斯替        C1_Idle / C1_Attack / C2_Idle / C2_Attack_2 / ...
+      只看"前缀"的话这两个 Boss 一个动作都匹配不上（整只没有小人）。
+      包含匹配会命中**先出现的那个**（C1_* 在数组里排在 C2_* 前面），
+      正好就是我们要的一阶段形态 —— 二阶段以后按 `_2` 素材单独换。
+    */
+    for (const cand of list) {
+      const i = lower.findIndex((n) => n.includes(cand.toLowerCase()));
+      if (i >= 0) return pool[i];
+    }
+    return null;
+  };
+  const hit = tryList(PRIORITY[key]);
+  if (hit) return hit;
+  if (key === 'attack') return tryList(ATTACK_FALLBACK);
+  return null;
+}
+
+/* ============================================================
+   画布与渲染目标
+   ============================================================ */
+// 注意：这里**不能**写 `const PIXI = window.PIXI`。
+// pixi.min.js 是用 `var PIXI` 声明的全局变量，同名的 `const` 会直接抛
+// SyntaxError: Identifier 'PIXI' has already been declared，整个脚本都不执行。
+PIXI.Ticker.shared.stop();
+
+/*
+  ============================================================
+  设计框（box）与画布（canvas）是两回事
+  ============================================================
+  CFG.cell 是**设计框**：它那块面积一一对应卡片上的立绘区，
+  所以它的高度决定小人在卡片上多大（见 apps/web/src/three/chibi.ts）。
+
+  但**画布**不一定等于设计框：
+    · 出手时把武器举过头顶、阵亡时横着铺开 —— 这些动作的内容
+      会超出设计框。画布要是正好等于设计框，超出的部分就被裁掉了
+      （实测 49 个干员里 42 个有动作被裁，比如 op12 挥杖时杖头被切平）。
+    · 所以先按设计框收敛好取景，再量一遍"所有动作的并集"，
+      按并集把画布**对称扩大**到刚好装下。
+  清单里同时写 cell（画布）和 box（设计框），游戏按 box 映射立绘区、
+  按 cell/box 的比例把整体放大 —— 小人该多大还多大，多出来的只是地方。
+
+  量的时候画布必须**先开得足够大**（四周各留一个设计框），
+  否则量到的盒子会被画布裁掉，永远量不出"到底溢出了多少"。
+  ============================================================
+*/
+const BOX = { w: CFG.cell.w, h: CFG.cell.h };
+/*
+  ★ 渲染器和渲染目标必须**一样大**，否则画出来是空的。
+  踩过的坑：把 RT 开成 672×510 而 PIXI 应用还是 224×170 时，
+  readPixels 读回来整张全透明（一个不透明像素都没有）——
+  渲染器按自己的 screen 尺寸算投影，比 screen 大的 RT 就什么都没有。
+  所以下面创建应用时用的就是画布尺寸（反正渲染永远走 rt，应用自己的画布没人看）。
+*/
+const PROBE_PAD = { x: BOX.w * (CFG.probePad ?? 1), y: BOX.h * (CFG.probePad ?? 1) };
+let canvasW = BOX.w + 2 * PROBE_PAD.x;
+let canvasH = BOX.h + 2 * PROBE_PAD.y;
+
+const app = new PIXI.Application({
+  width: canvasW,
+  height: canvasH,
+  backgroundAlpha: 0,
+  antialias: true,
+  preference: 'webgl',
+  autoStart: false,
+  resolution: 1,
+});
+app.ticker.stop();
+document.body.appendChild(app.view);
+
+/** 设计框在画布里的左上角偏移 */
+let off = { x: PROBE_PAD.x, y: PROBE_PAD.y };
+
+let rt = PIXI.RenderTexture.create({ width: canvasW, height: canvasH });
+let readBuf = new Uint8Array(canvasW * canvasH * 4);
+
+/** 逐帧的 ImageData 缓冲（复用，避免每帧 new） */
+let frameData = null;
+
+/** 换一块画布（定稿时按并集缩小，或诊断时换尺寸） */
+function resizeCanvas(w, h, newOff) {
+  if (rt) rt.destroy(true);
+  canvasW = w;
+  canvasH = h;
+  off = { x: newOff.x, y: newOff.y };
+  rt = PIXI.RenderTexture.create({ width: w, height: h });
+  readBuf = new Uint8Array(w * h * 4);
+  frameData = null; // 尺寸变了，复用的 ImageData 作废
+  // 渲染器要跟着变，否则 RT 比 screen 大就渲染不出东西（见上面 ★）
+  app.renderer.resize(w, h);
+}
+
+/**
+ * ★ 每个干员开渲之前必须把画布**复位到探测尺寸**。
+ *
+ * 画布尺寸是模块级状态：上一个干员定稿时被缩到"刚装下它的并集"，
+ * 下一个干员如果不复位，就会在那块小画布上量自己的动作 ——
+ * 溢出部分当场被裁掉，量出来永远是"没溢出"，于是画布永远不撑大。
+ * 表现很隐蔽：第一个干员是对的，后面 48 个全错，而且日志看不出异常。
+ */
+function resetProbeCanvas() {
+  resizeCanvas(BOX.w + 2 * PROBE_PAD.x, BOX.h + 2 * PROBE_PAD.y, { x: PROBE_PAD.x, y: PROBE_PAD.y });
+}
+
+/**
+ * 把渲染目标里的这一帧写进横条的第 i 格。
+ * 数据是预乘 alpha 的，这里除一次 alpha 反预乘。
+ *
+ * 【关于"要不要上下翻转"】
+ * gl.readPixels 的 GL 约定是"第 0 行在最下面"，直觉上要翻一次；
+ * 但 Pixi 渲染到 RenderTexture 时会自己把投影的 y 反过来，
+ * 所以读回来的行序**已经是正向**的（实测：再翻一次小人就是倒立着走）。
+ * 这里不翻，注释留着免得以后有人"顺手修好它"。
+ */
+function blitFrame(stripCtx, buf, frameIndex) {
+  const w = canvasW;
+  const h = canvasH;
+  if (!frameData || frameData.width !== w || frameData.height !== h) {
+    frameData = stripCtx.createImageData(w, h);
+  }
+  const d = frameData.data;
+  const rowBytes = w * 4;
+  for (let y = 0; y < h; y++) {
+    const src = y * rowBytes;
+    const dst = y * rowBytes;
+    for (let x = 0; x < rowBytes; x += 4) {
+      const a = buf[src + x + 3];
+      if (a === 0) {
+        d[dst + x] = 0; d[dst + x + 1] = 0; d[dst + x + 2] = 0; d[dst + x + 3] = 0;
+        continue;
+      }
+      const k = 255 / a;
+      const r = (buf[src + x] * k) | 0;
+      const g = (buf[src + x + 1] * k) | 0;
+      const b = (buf[src + x + 2] * k) | 0;
+      d[dst + x] = r > 255 ? 255 : r;
+      d[dst + x + 1] = g > 255 ? 255 : g;
+      d[dst + x + 2] = b > 255 ? 255 : b;
+      d[dst + x + 3] = a;
+    }
+  }
+  stripCtx.putImageData(frameData, frameIndex * w, 0);
+}
+
+/** 渲染当前 stage 到指定渲染目标，然后把像素读回来 */
+function grabInto(renderTexture, buf) {
+  app.renderer.render(app.stage, { renderTexture });
+  const gl = app.renderer.gl;
+  gl.bindFramebuffer(gl.FRAMEBUFFER, renderTexture.framebuffer.framebuffer);
+  gl.readPixels(0, 0, renderTexture.width, renderTexture.height, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  return buf;
+}
+
+/** 渲染到成品尺寸的格子并读回像素 */
+function grabPixels() {
+  return grabInto(rt, readBuf);
+}
+
+/**
+ * 从像素里量出"有内容"的范围（alpha 大于阈值才算）。
+ * 这就是玩家真正看到的小人轮廓，比骨架报的包围盒靠谱。
+ */
+function alphaBox(buf, w, h) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (let y = 0; y < h; y++) {
+    const row = y * w * 4;
+    for (let x = 0; x < w; x++) {
+      if (buf[row + x * 4 + 3] > 8) {
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+      }
+    }
+  }
+  if (!isFinite(x0)) return null;
+  return { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+}
+
+/** 两个矩形求并集 */
+function unionRect(a, b) {
+  const x = Math.min(a.x, b.x);
+  const y = Math.min(a.y, b.y);
+  const x2 = Math.max(a.x + a.w, b.x + b.w);
+  const y2 = Math.max(a.y + a.h, b.y + b.h);
+  return { x, y, w: x2 - x, h: y2 - y };
+}
+
+/* ============================================================
+   姿势采样 / 包围盒
+   ============================================================ */
+/** 把骨架摆到某个动作的 t 时刻。不走真实时钟，纯粹按时间点求值。 */
+function poseAt(spine, animName, t) {
+  spine.state.clearTracks();
+  spine.skeleton.setToSetupPose();
+  spine.state.setAnimation(0, animName, true);
+  spine.update(Math.max(1e-6, t));
+}
+
+/** 某个动作从 0 到时长之间，逐帧采样后的联合包围盒 */
+function unionBounds(spine, animName, duration, frames) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (let i = 0; i < frames; i++) {
+    poseAt(spine, animName, (duration * i) / frames);
+    const b = spine.getLocalBounds();
+    if (!isFinite(b.x) || !isFinite(b.width) || b.width <= 0 || b.height <= 0) continue;
+    x0 = Math.min(x0, b.x);
+    y0 = Math.min(y0, b.y);
+    x1 = Math.max(x1, b.x + b.width);
+    y1 = Math.max(y1, b.y + b.height);
+  }
+  if (!isFinite(x0)) return null;
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
+/* ============================================================
+   单个干员
+   ============================================================
+   注意：这个内部渲染函数**不能**叫 renderOne。
+   顶层函数声明会成为 window 的属性，如果和下面导出的
+   window.renderOne 同名，wrapper 内部那一句 `renderOne(...)`
+   就会解析到自己，变成无限递归（表现是几十秒里往服务器灌上万次请求）。
+*/
+async function renderCharacter(defId, charId, opts) {
+  const url = `/spine/${charId}/${charId}.skel`;
+  const loaded = await PIXI.Assets.load(url);
+  const spineData = loaded.spineData ?? loaded.spine ?? loaded;
+  if (!spineData?.animations?.length) throw new Error('骨架里没有动画');
+
+  const names = spineData.animations.map((a) => a.name);
+  const durationOf = (n) => {
+    const a = spineData.animations.find((x) => x.name === n);
+    return a && a.duration > 0 ? a.duration : 1 / 30;
+  };
+
+  // ---------- 1. 选出要导出的动作 ----------
+  const wanted = [
+    { key: 'idle', loop: true },
+    /*
+      ★ move 放在 attack/skill 之前（顺序只影响导出顺序，不影响取景）。
+      它是**循环**动作 —— 走一格 0.4 秒，而它的自然时长中位 1.3 秒，
+      循环播才不会走一半就停住。
+    */
+    { key: 'move', loop: true },
+    { key: 'attack', loop: false },
+    { key: 'skill', loop: false },
+    { key: 'stun', loop: true },
+    { key: 'die', loop: false },
+  ];
+  const picked = [];
+  // 允许调用方点名某个动作（奎隆的一阶段待机是 A_Idle，但自动匹配会挑到时长 0 的 Default）
+  const override = (opts && opts.picks) || {};
+  for (const w of wanted) {
+    const forced = override[w.key];
+    const name = forced && names.includes(forced) ? forced : pickAnim(names, w.key);
+    if (!name) continue;
+    const dur = durationOf(name);
+    const cap = w.loop ? CFG.maxFrames : CFG.maxFramesOnce;
+    const frames = Math.max(CFG.minFrames, Math.min(cap, Math.round(dur * CFG.fps)));
+    /*
+      名字里带 Loop 的一律按循环播 —— 即使它落在"技能/出手"这一档。
+      例：op39 的技能只有 Skill_1_Loop / Skill_2_Loop / Skill_3_Loop，
+      当成一次性播放的话会停在第 32 帧定住，看起来像卡了。
+    */
+    const loop = w.loop || /loop/i.test(name);
+    picked.push({ key: w.key, name, loop, duration: dur, frames, fps: frames / dur });
+  }
+  if (!picked.length) throw new Error('一个动作都没匹配上');
+
+  // ---------- 2. 取景：在**设计框**里迭代收敛 ----------
+  const spine = new PIXI.spine.Spine(spineData);
+  spine.autoUpdate = false;
+  app.stage.addChild(spine);
+
+  // 画布是模块级状态，上一个干员定稿时缩过 —— 先复位（理由见 resetProbeCanvas 的注释）
+  resetProbeCanvas();
+
+  const CW = BOX.w;
+  const CH = BOX.h;
+  const BIAS = CFG.scaleBias || 1;
+
+  /** 目标框：设计框去掉边距后的区域。待机要填满它的高度。 */
+  const TARGET = {
+    x: CW * CFG.marginX,
+    y: CH * CFG.marginY,
+    w: CW * (1 - 2 * CFG.marginX),
+    h: CH * (1 - 2 * CFG.marginY),
+  };
+
+  /**
+   * 当前变换：骨架本地坐标 → **设计框**像素。
+   * 注意画到画布上时还要加 off（设计框在画布里的偏移），见 applyXf。
+   */
+  const xf = { s: 1, ox: 0, oy: 0 };
+  const applyXf = () => {
+    spine.scale.set(xf.s * BIAS);
+    spine.x = xf.ox + off.x;
+    spine.y = xf.oy + off.y;
+  };
+
+  // --- 2a. 取骨架的"身高"当粗摆参考（只用大小，不用位置，原因见下面 ★） ---
+  const idlePick = picked.find((p) => p.key === 'idle') ?? picked[0];
+  const roughBox = unionBounds(spine, idlePick.name, idlePick.duration, idlePick.frames);
+  if (!roughBox) throw new Error('算不出骨架包围盒');
+
+  /*
+    ============================================================
+    ★ 粗摆：**不能**用骨架包围盒来定位
+    ============================================================
+    pixi-spine 的 getLocalBounds 对这素材库**位置完全不可信** ——
+    实测 op31 焰尾 / op41 耀骑士临光 / op50 能天使：照它摆完之后，
+    画布里一个像素都没有（小人在框外面）。
+    它的**大小**还能参考（身高数量级是对的），位置不能信。
+
+    所以改成：以骨架本地原点为中心，按"身高"估一块足够大的区域塞进格子。
+    依据是 Arknights 小人的坐标系很统一 —— 脚站在 y≈0、身高几百单位。
+    这只是迭代的**起点**，准不准无所谓，下一轮用像素把它修准。
+    ============================================================
+  */
+  const aim = (unitHeight) => {
+    const region = {
+      x: -unitHeight * 0.95,
+      y: -unitHeight * 1.08,
+      w: unitHeight * 1.9,
+      h: unitHeight * 1.22,
+    };
+    xf.s = Math.min(TARGET.w / region.w, TARGET.h / region.h) * 0.96;
+    xf.ox = TARGET.x + TARGET.w / 2 - (region.x + region.w / 2) * xf.s;
+    xf.oy = TARGET.y + TARGET.h / 2 - (region.y + region.h / 2) * xf.s;
+  };
+  aim(Math.max(200, roughBox.h));
+  applyXf();
+  const startScale = xf.s;
+
+  /*
+    ★ 预热一帧，别省。
+    pixi-spine 的骨架**第一次**被渲染时，图集贴图才真正上传到 GPU，
+    所以那一次读到的是一张全透明画面 —— 它还会污染成品序列帧的第 0 帧，
+    播出来就是"小人闪一下"。先空渲染一次把这一帧顶掉。
+  */
+  poseAt(spine, picked[0].name, 0);
+  grabPixels();
+
+  /**
+   * 量一个动作的可见范围，返回**设计框坐标**下的盒子（不是画布坐标）。
+   * 导出多少帧就量多少帧，否则会漏掉最大值。
+   */
+  const measureInCell = (animName, duration, frames) => {
+    let box = null;
+    for (let i = 0; i < frames; i++) {
+      poseAt(spine, animName, (duration * i) / frames);
+      const b = alphaBox(grabPixels(), canvasW, canvasH);
+      if (!b) continue;
+      const inBox = { x: b.x - off.x, y: b.y - off.y, w: b.w, h: b.h };
+      box = box ? unionRect(box, inBox) : inBox;
+    }
+    return box;
+  };
+
+  /*
+    ============================================================
+    ★ 为什么必须"在最终那个像素比例上量"，不能"缩小了再量完换算"
+    ============================================================
+    这条是踩出来的。原来的做法是：在 256×340 的取景画布上量出小人的像素范围，
+    再按比例换算到 128×170 的成品格子。结果每个干员都偏大 9%~12%，
+    而且**宽偏得多、高偏得少**（说明不是缩放没生效，是盒子本身量错了）——
+    因为小比例下细发丝 / 耳朵 / 刀尖的 alpha 会掉到阈值以下、被当成"没有内容"，
+    量出来的盒子偏小，换算到成品小人就整体放大。
+    一句话：**量的时候看不见的东西，画的时候会原样冒出来。**
+
+    所以量的时候用的画布比设计框大，但**变换 xf 一模一样** ——
+    画到画布上的只是整体平移了一个 off（设计框在画布里的位置）。
+    像素比例完全没变，量到的就是画出来的；画布大只是让"框外面"的内容
+    也有地方落，不会当场被裁掉（正是这一条让"到底溢出了多少"变得可测）。
+
+    渲染是确定性的纯仿射变换，"想让盒子落到哪"有解析解，两三轮收敛：
+      当前变换 (s, ox, oy) 量出盒子 U
+        → 反推盒子的本地坐标 L = ((U-偏移)/s, U.宽高/s)
+        → 装进目标框：s' = min(目标宽/L.宽, 目标高/L.高)
+        → 底边中点对齐：o' = 目标框底边中点 - L 底边中点 × s'
+    ============================================================
+  */
+
+  /*
+    ============================================================
+    取景规则（这一版是"尺寸一致性优先"）
+    ============================================================
+    只有一条硬约束：
+
+    ① 待机必须填满目标框的高度（同时不能横向溢出目标框）。
+       玩家 95% 的时间看到的就是待机姿势，只有它填满了，
+       所有干员在卡片上才是**一样大**的。
+       （只按联合盒去"塞进格子"的话，谁拿了大枪/长枪谁就被挤小 ——
+       实测纵占比 45%~90%，同一排卡片里高矮差一倍，很难看。）
+
+    至于"出手时武器举过头顶、阵亡时横着铺开"这些溢出：
+    **不再靠缩小待机去迁就，而是把画布放大去装它们**（见文件开头那段）。
+    所以这里没有"允许溢出百分之多少"这种约束了 ——
+    那种约束在画布=格子的时候是**假的**：允许溢出，可画布外面根本没有像素，
+    超出格子的内容当场就被裁掉了（实测 42/49 个干员中招）。
+    现在改成量出真实并集、按并集裁画布，溢出多少就有多少地方。
+
+    只剩一条兜底：非待机动作里比待机大得离谱（>1.9 倍，通常是大招的一大片特效）
+    的，不参与尺寸拟合 —— 宁可让它被裁一点，也不能让站着的小人缩成一个点。
+    ============================================================
+  */
+  /*
+    ★ 上限要留出余量，别卡在刀锋上。
+    第一版设的 0.45 / 0.28 刚好等于 7 个大招特效干员（op02 夕 的墨浪、
+    op41 耀骑士 之类）的实际需要，结果它们"刚好齐边"——
+    这一版没被切，但下一版稍微变一点（改帧率、换采样）就会被切。
+    放宽到 0.50 / 0.32 之后它们都有几像素余量；对体积的影响极小
+    （多出来的是透明区，PNG 里几乎不占字节）。
+  */
+  /** 画布最多比设计框宽/高多少（防止个别动作把画布撑得离谱，白占体积） */
+  const MAX_PAD_X = 0.5;
+  const MAX_PAD_Y = 0.32;
+
+  const frameAnims = picked.filter((p) => p.key !== 'die'); // 参与尺寸拟合的动作
+  const diePick = picked.find((p) => p.key === 'die');
+
+  let boxes = {};
+  let dieBox = null;
+  let union = null;
+  let rounds = 0;
+  let converged = false;
+
+  const measureAll = () => {
+    boxes = {};
+    union = null;
+    for (const p of frameAnims) {
+      const b = measureInCell(p.name, p.duration, p.frames);
+      boxes[p.key] = b;
+      if (b) union = union ? unionRect(union, b) : b;
+    }
+    dieBox = diePick ? measureInCell(diePick.name, diePick.duration, diePick.frames) : null;
+    return boxes.idle ?? union;
+  };
+
+  while (rounds < 6) {
+    rounds++;
+    if (!measureAll()) {
+      // 诊断：把现场数字带出来（正常不会走到这里）
+      let ink = 0;
+      for (let k = 3; k < readBuf.length; k += 4) if (readBuf[k] > 8) ink++;
+      throw new Error(
+        `量不到任何可见像素 canvas=${canvasW}x${canvasH} off=${off.x},${off.y} ` +
+          `xf=${JSON.stringify(xf)} 画布不透明像素=${ink} rough=${JSON.stringify(roughBox)}`,
+      );
+    }
+
+    // 剔除离群的大动作后重新量（参与取景的动作集变了，上一轮的盒子作废）
+    const idleB = boxes.idle ?? union;
+    const out = frameAnims.find((p) => {
+      const b = boxes[p.key];
+      return b && p.key !== 'idle' && (b.w > idleB.w * 1.9 || b.h > idleB.h * 1.9);
+    });
+    if (out) {
+      frameAnims.splice(frameAnims.indexOf(out), 1);
+      continue;
+    }
+
+    // 把设计框里的盒子换算回骨架本地坐标（当前变换下）
+    const toLocal = (b) => ({
+      x: (b.x - xf.ox) / xf.s,
+      y: (b.y - xf.oy) / xf.s,
+      w: b.w / xf.s,
+      h: b.h / xf.s,
+    });
+    const iL = toLocal(idleB);
+
+    // ① 待机填满目标高度 + 待机不能横向溢出目标框（两条件取小）
+    const s2 = Math.min(TARGET.h / iL.h, TARGET.w / iL.w);
+
+    // 缩放变化不足 0.4% 就算收敛：再迭代只剩抗锯齿级别的抖动
+    if (Math.abs(s2 / xf.s - 1) < 0.004) {
+      converged = true;
+      break; // 当前变换下量到的 boxes/union/dieBox 就是最终自检结果
+    }
+    xf.s = s2;
+    xf.ox = CW / 2 - (iL.x + iL.w / 2) * s2; // 水平按**待机**居中（身体在中间）
+    xf.oy = TARGET.y + TARGET.h - (iL.y + iL.h) * s2; // 待机底边贴目标框底边
+    applyXf();
+  }
+  if (!converged) measureAll();
+
+  /*
+    ---------- 2b. 按"所有动作的并集"定稿画布（迭代自校正） ----------
+    上面收敛出来的变换是"设计框坐标"里的。并集要是超出设计框，
+    就把画布四周对称撑开，并**把设计框挪到画布正中**（off 跟着变），
+    这样设计框的中点始终等于画布中点 —— 游戏那边只要按 box 居中映射就行
+    （见 chibi.ts 的 layoutChibi）。
+
+    ★ 为什么要"撑一次、再量一次、不够再撑"？
+    因为**量出来的并集本身依赖画布尺寸**：
+    换渲染目标之后栅格化会有几像素的差，量出来的盒子跟撑之前不一样。
+    一次算完的写法实测差 4px 左右 —— 就是这 4px 让边界上的动作还是擦着被切。
+    所以这里自校正：每轮按当前量到的并集重新要一个画布尺寸，
+    够了（或已经到上限、再加也没用）就停。
+  */
+  const unionOf = (list) => list.reduce((acc, b) => (b ? (acc ? unionRect(acc, b) : b) : acc), null);
+  const padFor = (n, box, big) =>
+    Math.max(0, Math.min(Math.ceil(n) + 4, Math.round(box * big)));
+  // +4 是安全边。别只留 1~2px：量并集用的 alpha 阈值和最终 PNG 总会有
+  // 一两像素的抗锯齿差，边缘上万一还差一点就会"擦边被切"，留 4px 安稳。
+
+  let finalBoxes = {};
+  let finalUnion = null;
+  let finalIdle = null;
+  let finalDie = null;
+  const pickFinal = () => {
+    finalBoxes = {};
+    finalUnion = null;
+    finalIdle = null;
+    finalDie = null;
+    for (const p of picked) {
+      const b = measureInCell(p.name, p.duration, p.frames);
+      finalBoxes[p.key] = b;
+      if (p.key === 'idle') finalIdle = b;
+      if (p.key === 'die') finalDie = b;
+      if (b) finalUnion = finalUnion ? unionRect(finalUnion, b) : b;
+    }
+    finalIdle = finalIdle ?? finalUnion;
+  };
+
+  const overflowOf = (u) =>
+    u
+      ? {
+          x: Math.max(0, -u.x, u.x + u.w - CW),
+          y: Math.max(0, -u.y, u.y + u.h - CH),
+        }
+      : { x: 0, y: 0 };
+
+  // 初值 -1 不是笔误：第一轮必然要"要一个尺寸"（want >= 4 > -1），
+  // 这样"一点溢出都没有"的干员也会把画布从**探测尺寸**缩回 BOX+8，
+  // 而不是留在 672×510 上下不来（那会输出一堆大片透明边的巨图）。
+  let padX = -1;
+  let padY = -1;
+  let overflowX = 0;
+  let overflowY = 0;
+  for (let round = 0; round < 4; round++) {
+    pickFinal();
+    // 不裁切是硬要求，所以这里用**全部动作**的并集，
+    // 包括上面因为太大被剔出尺寸拟合的那个（它只是不参与"待机多大"，不等于可以被切）
+    const of = overflowOf(finalUnion);
+    overflowX = of.x;
+    overflowY = of.y;
+    const wantX = padFor(of.x, CW, MAX_PAD_X);
+    const wantY = padFor(of.y, CH, MAX_PAD_Y);
+    if (wantX <= padX && wantY <= padY) break; // 已经装得下（或已到上限）→ 定稿
+    padX = wantX;
+    padY = wantY;
+    resizeCanvas(CW + 2 * padX, CH + 2 * padY, { x: padX, y: padY });
+    applyXf();
+    poseAt(spine, picked[0].name, 0);
+    grabPixels(); // 新画布先空渲染一帧（新 RT 的图集还没上传）
+  }
+  // 画布定稿后最后量一次：清单里的盒子/四边余量都按它写
+  pickFinal();
+
+  // 成品自检的并集（= 上方最后一次 pickFinal 的结果）
+  const unionBox = finalUnion;
+  const idleBox = finalIdle;
+
+  // ---------- 3. 逐帧渲染 ----------
+  const animations = {};
+  const stats = {};
+
+  /**
+   * 把一个动作渲成横条 PNG 存到服务器，并在清单里记一行。
+   * ★ 0.0.3：抽成函数是为了「阶段专属动作」也能复用同一套定稿变换 ——
+   * 二阶段的动作必须和本体动作**同一个比例、同一个脚点**，否则换形态时会跳一下。
+   */
+  async function emitStrip(key, name, loop, duration, frames) {
+    const strip = document.createElement('canvas');
+    strip.width = canvasW * frames;
+    strip.height = canvasH;
+    const stripCtx = strip.getContext('2d', { willReadFrequently: true });
+    frameData = null; // 每张横条用一个新的 ImageData（宽度相同，可以复用，但省心起见清掉）
+
+    const dt = duration / frames;
+    poseAt(spine, name, 0);
+    let ink = 0;
+    for (let i = 0; i < frames; i++) {
+      const buf = grabPixels();
+      if (i === 0) {
+        // 统计一下第 0 帧有多少不透明像素，用来判断素材是不是真的画出来了
+        for (let k = 3; k < buf.length; k += 4) if (buf[k] > 8) ink++;
+      }
+      blitFrame(stripCtx, buf, i);
+      spine.update(dt);
+    }
+
+    const blob = await new Promise((r) => strip.toBlob(r, 'image/png'));
+    const res = await fetch(`/save?defId=${encodeURIComponent(defId)}&anim=${encodeURIComponent(key)}`, {
+      method: 'POST',
+      body: blob,
+    });
+    if (!res.ok) throw new Error(`保存 ${key} 失败：HTTP ${res.status}`);
+
+    animations[key] = {
+      file: `${key}.png`,
+      frames,
+      fps: Math.round((frames / duration) * 1000) / 1000,
+      loop,
+    };
+    stats[key] = { animName: name, seconds: Math.round(duration * 1000) / 1000, ink };
+  }
+
+  for (const p of picked) {
+    await emitStrip(p.key, p.name, p.loop, p.duration, p.frames);
+  }
+
+  /*
+    ---------- 3b. 阶段专属动作（★ 0.0.3）----------
+    有些 Boss 的骨架里**同时装着两个形态的动作**（"阶段_动作"命名法）：
+      杰斯顿 / 博卓卡斯替：C1_* 是一阶段、C2_* 是二阶段
+      奎隆            ：A_* / B_* / C_* 三套
+    这里按调用方给的 pick 名单，用**定稿后的同一套变换**再渲一套出来，
+    清单里记成 idle2 / attack2 / skill2 / die2 —— 游戏在二阶段读它们。
+    匹配顺序：精确 -> 不区分大小写。
+  */
+  const extraAnims = (opts && opts.extraAnims) || [];
+  const lowerNames = names.map((n) => n.toLowerCase());
+  for (const spec of extraAnims) {
+    let match = null;
+    for (const cand of spec.pick || []) {
+      const exact = names.indexOf(cand);
+      if (exact >= 0) { match = names[exact]; break; }
+      const i = lowerNames.indexOf(String(cand).toLowerCase());
+      if (i >= 0) { match = names[i]; break; }
+    }
+    if (!match) continue;
+    const duration = durationOf(match);
+    const cap = spec.loop ? CFG.maxFrames : CFG.maxFramesOnce;
+    const frames = Math.max(CFG.minFrames, Math.min(cap, Math.round(duration * CFG.fps)));
+    const loop = !!spec.loop || /loop/i.test(match);
+    await emitStrip(spec.key, match, loop, duration, frames);
+  }
+
+  app.stage.removeChild(spine);
+  spine.destroy({ children: true });
+
+  // 骨架数据很大（单个 skel 上百 KB），渲完就卸掉，免得几十个干员下来吃满内存
+  try {
+    await PIXI.Assets.unload(url);
+  } catch {
+    /* 卸不掉就算了，不影响结果 */
+  }
+
+  return {
+    charId,
+    cell: { w: canvasW, h: canvasH }, // 画布（序列帧单格尺寸）
+    /*
+      box：设计框在画布里的位置和大小。
+      游戏靠它把设计框映射到卡片立绘区，再按 cell/box 的比例把整体放大 ——
+      这样"小人该多大"只由 box.h 决定，画布为了装溢出动作变宽变高都不影响卡片上的大小。
+      （老的清单没有这个字段，chibi.ts 会退化成"画布就是设计框"，也就是老行为。）
+    */
+    box: { x: off.x, y: off.y, w: BOX.w, h: BOX.h },
+    animations,
+    stats,
+    debug: {
+      roughBox,
+      startScale, // 粗摆的缩放（起点）
+      finalScale: xf.s * BIAS, // 收敛后的最终缩放
+      rounds,
+      frameAnims: frameAnims.map((p) => p.key), // 参与取景的动作
+      box: { w: BOX.w, h: BOX.h },
+      cell: { w: canvasW, h: canvasH },
+      pad: { x: off.x, y: off.y },
+      overflow: { x: Math.round(overflowX), y: Math.round(overflowY) },
+      boxes: finalBoxes, // 每个动作在设计框坐标里的可见盒（定稿后）
+      dieBox: finalDie,
+      idleBox: finalIdle,
+      unionBox: finalUnion,
+      // 自检：并集是否都装进了画布（负数=被裁掉了多少像素）
+      clip: finalUnion
+        ? {
+            left: Math.round(finalUnion.x + padX),
+            top: Math.round(finalUnion.y + padY),
+            right: Math.round(canvasW - (finalUnion.x + finalUnion.w + padX)),
+            bottom: Math.round(canvasH - (finalUnion.y + finalUnion.h + padY)),
+          }
+        : null,
+    },
+  };
+}
+
+/**
+ * 渲染一个干员，返回**一个 JSON 字符串**。
+ *
+ * 【为什么返回字符串而不是对象？】
+ * CDP 的 Runtime.evaluate 用 returnByValue 传回复杂对象时会报
+ * "Object reference chain is too long"（对象图稍微一深就拒绝序列化）。
+ * 字符串永远能安全传回，所以这里自己 JSON.stringify，
+ * Node 侧再 JSON.parse —— 少一个能踩的坑。
+ */
+window.renderOne = async (defId, charId, opts) => {
+  try {
+    const manifest = await renderCharacter(defId, charId, opts);
+    await fetch('/manifest', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ defId, manifest }),
+    });
+    return JSON.stringify({
+      ok: true,
+      animations: manifest.animations,
+      stats: manifest.stats,
+      debug: manifest.debug,
+    });
+  } catch (err) {
+    return JSON.stringify({ ok: false, error: String((err && err.stack) || err) });
+  }
+};
+
+/**
+ * 只加载骨架、把动作名和匹配结果报回来（不渲染）。
+ * 用途：`node scripts/render-chibi.mjs --list` —— 排查"某个干员为什么没匹配到出手动作"。
+ */
+window.listOne = async (defId, charId) => {
+  try {
+    const url = `/spine/${charId}/${charId}.skel`;
+    const loaded = await PIXI.Assets.load(url);
+    const spineData = loaded.spineData ?? loaded.spine ?? loaded;
+    const names = (spineData?.animations ?? []).map((a) => a.name + '(' + Math.round(a.duration * 100) / 100 + 's)');
+    const picked = {};
+    const raw = (spineData?.animations ?? []).map((a) => a.name);
+    for (const key of Object.keys(PRIORITY)) picked[key] = pickAnim(raw, key);
+    try {
+      await PIXI.Assets.unload(url);
+    } catch {}
+    return JSON.stringify({ ok: true, names, picked });
+  } catch (err) {
+    return JSON.stringify({ ok: false, error: String((err && err.stack) || err) });
+  }
+};
+
+window.__READY = true;
+</script>
+</body>
+</html>

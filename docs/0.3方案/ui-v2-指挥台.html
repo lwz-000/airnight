@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>失序协议 · UI 方案 V2「指挥台」</title>
+<style>
+/* ============================================================
+   V2「指挥台」—— 同一套配色语汇，换成更"仪表盘"的构图
+   · 顶栏拆两行：上行操作 / 下行一条连续状态带
+   · 商店改成**横条卡**（左图右信息），信息密度更高
+   · 棋盘用三角阵列 + 点阵做刻度感
+   ============================================================ */
+@font-face{
+  font-family:'SHS';
+  src:url('../../apps/web/public/fonts/NotoSansSC.woff2') format('woff2-variations'),
+      local('Noto Sans SC'), local('Source Han Sans SC');
+  font-weight:100 900;
+}
+:root{
+  --bg:#0A0B0C;
+  --line:#24282D;
+  --line-lit:#3A4048;
+  --text:#EDEFF2;
+  --dim:#8B9199;
+  --faint:#585E66;
+  --hl:#C9FA43;
+  --hl-dim:#6E8A26;
+  --res:#F5C544;
+  --warn:#FF5252;
+  --top:84px; --dock:230px; --left:214px; --right:266px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--text);font-family:'SHS',system-ui,sans-serif;font-size:13px;
+  overflow:hidden;-webkit-font-smoothing:antialiased}
+.mono{font-variant-numeric:tabular-nums;letter-spacing:.06em}
+.lat{text-transform:uppercase;letter-spacing:.26em;font-size:8.5px;color:var(--faint)}
+
+.dia{width:6px;height:6px;background:var(--hl);transform:rotate(45deg);flex:none}
+.dia.off{background:var(--line-lit)}
+
+/* 三角阵列：顶栏状态带的分隔符，也是这一版的记号 */
+.tri{width:10px;height:14px;flex:none;
+  background:
+    linear-gradient(180deg,transparent 0 3px,var(--line-lit) 3px 4px,transparent 4px),
+    linear-gradient(180deg,transparent 7px 10px,var(--line-lit) 10px 11px,transparent 11px);
+
+  clip-path:polygon(50% 0,100% 100%,0 100%)}
+
+/* ============ 顶栏（两行） ============ */
+#top{position:fixed;inset:0 0 auto 0;height:var(--top);z-index:10;
+  background:linear-gradient(180deg,#101215,#0A0B0C);border-bottom:1px solid var(--line);
+  display:flex;flex-direction:column}
+.row1{display:flex;align-items:center;height:46px;border-bottom:1px solid var(--line)}
+.back{display:flex;align-items:center;gap:9px;padding:0 16px;height:100%;border:0;border-right:1px solid var(--line);
+  background:transparent;color:var(--dim);font-family:inherit;font-size:11.5px;letter-spacing:.14em;cursor:pointer}
+.back:hover{color:var(--text);background:#15171A}
+.back i{width:7px;height:7px;border-left:1px solid currentColor;border-top:1px solid currentColor;transform:rotate(-45deg)}
+.brand{display:flex;align-items:baseline;gap:10px;padding:0 18px;border-right:1px solid var(--line)}
+.brand b{font-size:15px;font-weight:900;letter-spacing:.32em}
+.brand span{font-size:8px;letter-spacing:.26em;color:var(--faint)}
+.spacer{flex:1}
+.tabs{display:flex;height:100%}
+.tab{border:0;background:transparent;color:var(--faint);padding:0 15px;font-family:inherit;font-size:11px;
+  letter-spacing:.2em;border-left:1px solid var(--line);cursor:pointer;position:relative}
+.tab.on{color:var(--hl);background:#111316}
+.tab.on::after{content:'';position:absolute;left:8px;right:8px;bottom:-1px;height:2px;background:var(--hl)}
+
+/* 下行：一条连续的状态带（横向状态线的放大版） */
+.row2{display:flex;align-items:stretch;height:38px;overflow:hidden}
+.band{display:flex;align-items:center;gap:9px;padding:0 16px;border-right:1px solid var(--line);position:relative}
+.band em{font-style:normal;font-size:9px;letter-spacing:.2em;color:var(--faint)}
+.band b{font-size:15px;font-weight:700;line-height:1;font-variant-numeric:tabular-nums}
+.band::after{content:'';position:absolute;left:16px;bottom:6px;width:14px;height:2px;background:var(--line-lit)}
+.band.hl b{color:var(--hl)} .band.hl::after{background:var(--hl)}
+.band.res b{color:var(--res)} .band.res::after{background:var(--res)}
+.band.warn b{color:var(--warn)} .band.warn::after{background:var(--warn)}
+/* 中间一条贯穿的刻度线，把"读数"和"控制"分开 */
+.tickline{flex:1;align-self:center;height:1px;margin:0 12px;
+  background:repeating-linear-gradient(90deg,var(--line-lit) 0 1px,transparent 1px 8px);opacity:.85}
+.phase{display:flex;align-items:center;gap:8px;padding:0 16px;border-left:1px solid var(--line)}
+.phase b{font-size:12px;letter-spacing:.18em;color:var(--hl)}
+
+/* ============ 主区 ============ */
+#main{position:fixed;inset:var(--top) 0 var(--dock) 0;display:grid;
+  grid-template-columns:var(--left) 1fr var(--right)}
+
+/* ---- 左：羁绊（紧凑刻度条） ---- */
+#traits{border-right:1px solid var(--line);background:#0D0F11;padding:12px 0;position:relative}
+.sec{display:flex;align-items:baseline;gap:8px;padding:0 14px 9px}
+.sec b{font-size:11.5px;font-weight:800;letter-spacing:.22em}
+.sec span{font-size:8.5px;color:var(--faint);letter-spacing:.12em}
+
+.trait{display:flex;align-items:center;gap:9px;padding:7px 14px;position:relative}
+.trait .mk{width:0;height:0;border-left:5px solid var(--line-lit);border-top:3px solid transparent;
+  border-bottom:3px solid transparent;flex:none}
+.trait.on .mk{border-left-color:var(--hl)}
+.trait .body{flex:1;min-width:0}
+.trait .t{display:flex;justify-content:space-between;align-items:baseline;gap:6px}
+.trait .t b{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.trait .t i{font-style:normal;font-size:10.5px;color:var(--dim);font-variant-numeric:tabular-nums}
+.trait.on .t i{color:var(--hl)}
+/* 横向状态线：一条细线 + 已满足部分实心 */
+.trait .ln{height:1px;background:#242830;margin-top:6px;position:relative}
+.trait .ln i{position:absolute;inset:0 auto 0 0;background:var(--hl);height:1px}
+.trait:not(.on) .ln i{background:#40474F}
+.trait .ln::after{content:'';position:absolute;right:0;top:-2px;width:1px;height:5px;background:#242830}
+
+.hr{height:1px;background:var(--line);margin:11px 14px}
+
+/* ---- 中：棋盘 ---- */
+#board{position:relative;overflow:hidden;background:#08090A}
+.grid{position:absolute;inset:0;
+  background-image:
+    linear-gradient(90deg,rgba(135,150,170,.075) 1px,transparent 1px),
+    linear-gradient(0deg,rgba(135,150,170,.075) 1px,transparent 1px);
+  background-size:calc(100% / 10) calc(100% / 10)}
+.grid::before{content:'';position:absolute;inset:0 50% 0 0;
+  border-right:1px dashed rgba(201,250,67,.2);
+  background:linear-gradient(90deg,rgba(255,255,255,.022),transparent)}
+/* 三角阵列压在棋盘下沿，像一排传感器 */
+.tris{position:absolute;left:0;right:0;bottom:0;height:14px;
+  background-image:linear-gradient(90deg,var(--line-lit) 0 1px,transparent 1px 26px);
+  opacity:.35;
+  clip-path:polygon(0 100%,0 70%,2% 100%,2% 70%,4% 100%,4% 70%,6% 100%,6% 70%,8% 100%,8% 70%,10% 100%,10% 70%,12% 100%,12% 70%,14% 100%,14% 70%,16% 100%,16% 70%,18% 100%,18% 70%,20% 100%,20% 70%,22% 100%,22% 70%,24% 100%,24% 70%,26% 100%,26% 70%,28% 100%,28% 70%,30% 100%,30% 70%,32% 100%,32% 70%,34% 100%,34% 70%,36% 100%,36% 70%,38% 100%,38% 70%,40% 100%,40% 70%,42% 100%,42% 70%,44% 100%,44% 70%,46% 100%,46% 70%,48% 100%,48% 70%,50% 100%,50% 70%,52% 100%,52% 70%,54% 100%,54% 70%,56% 100%,56% 70%,58% 100%,58% 70%,60% 100%,60% 70%,62% 100%,62% 70%,64% 100%,64% 70%,66% 100%,66% 70%,68% 100%,68% 70%,70% 100%,70% 70%,72% 100%,72% 70%,74% 100%,74% 70%,76% 100%,76% 70%,78% 100%,78% 70%,80% 100%,80% 70%,82% 100%,82% 70%,84% 100%,84% 70%,86% 100%,86% 70%,88% 100%,88% 70%,90% 100%,90% 70%,92% 100%,92% 70%,94% 100%,94% 70%,96% 100%,96% 70%,98% 100%,98% 70%,100% 100%)}
+.vig{position:absolute;inset:0;background:radial-gradient(74% 64% at 50% 46%,transparent 40%,rgba(0,0,0,.55))}
+
+/* 中心圆环：这一版做得更"仪表"——细环 + 四段弧 */
+.ring{position:absolute;left:50%;top:46%;transform:translate(-50%,-50%);width:340px;height:340px;pointer-events:none}
+.ring i{position:absolute;inset:0;border-radius:50%;border:1px solid var(--line-lit)}
+.ring i:nth-child(1){opacity:.3}
+.ring i:nth-child(2){inset:56px;opacity:.42}
+.ring i:nth-child(3){inset:112px;opacity:.5;border-style:dashed;border-color:var(--hl-dim)}
+.ring i:nth-child(4){inset:168px;border:0;background:var(--hl)}
+.ch{position:absolute;left:50%;top:46%;transform:translate(-50%,-50%);width:400px;height:400px;pointer-events:none}
+.ch::before,.ch::after{content:'';position:absolute;background:var(--line-lit);opacity:.4}
+.ch::before{left:50%;top:0;bottom:0;width:1px}
+.ch::after{top:50%;left:0;right:0;height:1px}
+
+.board-tag{position:absolute;left:16px;top:14px;display:flex;align-items:center;gap:8px}
+.board-tag em{font-style:normal;font-size:8.5px;letter-spacing:.26em;color:var(--faint)}
+.board-tag b{font-size:10.5px;letter-spacing:.14em;color:var(--dim);font-weight:600}
+
+.unit{position:absolute;width:68px;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:5px}
+.unit .p{width:56px;height:70px;border:1px solid var(--line-lit);background:#181B1F center/cover no-repeat;
+  clip-path:polygon(0 0,100% 0,100% 100%,0 100%,0 0)}
+.unit .cap{width:56px}
+.unit .hp{height:2px;background:#282D34;margin-bottom:3px}
+.unit .hp i{display:block;height:100%;background:#E8EDF2}
+.unit .mp{height:2px;background:#282D34}
+.unit .mp i{display:block;height:100%;background:#7C848D}
+.unit .nm{font-size:8.5px;color:var(--dim);letter-spacing:.1em}
+.unit.foe .p{border-color:#4A2727}
+.unit.foe .hp i{background:var(--warn)}
+.unit.foe .mp i{background:#8A3A3A}
+.unit.sel .p{border-color:var(--hl)}
+.unit.sel .nm{color:var(--hl)}
+
+/* ---- 右：日志 ---- */
+#side{border-left:1px solid var(--line);background:#0D0F11;display:flex;flex-direction:column;overflow:hidden}
+#side .head{display:flex;align-items:baseline;justify-content:space-between;padding:13px 14px 9px}
+#side .head b{font-size:11.5px;font-weight:800;letter-spacing:.22em}
+#side .head span{font-size:8.5px;color:var(--faint);letter-spacing:.12em}
+.log{padding:0 14px}
+.log div{display:grid;grid-template-columns:36px 1fr;gap:8px;padding:6px 0;
+  border-bottom:1px solid rgba(36,40,45,.8);font-size:11px;line-height:1.5;color:var(--dim)}
+.log u{text-decoration:none;font-size:9px;color:var(--faint);font-variant-numeric:tabular-nums;padding-top:2px}
+.log b{color:var(--text);font-weight:600}
+.log .dmg{color:var(--warn)}
+.log .buff{color:var(--hl)}
+
+.mini{display:flex;align-items:center;justify-content:space-between;padding:7px 0;
+  border-bottom:1px solid rgba(36,40,45,.8);font-size:11px}
+.mini .nm{display:flex;align-items:center;gap:7px;white-space:nowrap}
+.mini .sw{width:5px;height:5px;background:var(--hl);transform:rotate(45deg)}
+.mini .v{color:var(--dim);font-variant-numeric:tabular-nums}
+.mini.me{color:var(--text)} .mini.me .v{color:var(--hl)}
+.mini:not(.me) .nm{color:var(--dim)} .mini:not(.me) .sw{background:#4A5057}
+
+/* ============ 底部（商店 = 横条卡） ============ */
+#dock{position:fixed;inset:auto 0 0 0;height:var(--dock);display:grid;
+  grid-template-columns:var(--left) 1fr var(--right);
+  background:linear-gradient(180deg,#0D0F11,#090A0B);border-top:1px solid var(--line);z-index:10}
+#dock .col{padding:12px 14px;display:flex;flex-direction:column;min-width:0}
+#dock .col.l{border-right:1px solid var(--line)}
+#dock .col.r{border-left:1px solid var(--line)}
+
+.goldrow{display:flex;align-items:baseline;gap:8px}
+.goldrow em{font-style:normal;font-size:8.5px;letter-spacing:.22em;color:var(--faint)}
+.goldrow b{font-size:30px;font-weight:900;line-height:1;color:var(--res);font-variant-numeric:tabular-nums}
+.goldrow i{font-style:normal;font-size:9.5px;color:var(--hl);border:1px solid var(--hl-dim);padding:1px 5px;letter-spacing:.1em}
+.lvrow{display:flex;align-items:center;gap:8px;margin-top:12px}
+.lv{font-size:9.5px;letter-spacing:.18em;color:var(--dim);border:1px solid var(--line-lit);padding:2px 6px}
+.lvrow .exp{flex:1;height:3px;background:#22262C;position:relative}
+.lvrow .exp i{position:absolute;inset:0 auto 0 0;width:58%;background:var(--hl)}
+.lvrow .txt{font-size:9.5px;color:var(--faint);font-variant-numeric:tabular-nums}
+
+.btn{font-family:inherit;font-size:11px;letter-spacing:.16em;color:var(--text);
+  background:#15181C;border:1px solid var(--line-lit);padding:8px 11px;cursor:pointer;
+  clip-path:polygon(0 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%)}
+.btn:hover{border-color:var(--hl);color:var(--hl)}
+.btn .c{color:var(--res);font-variant-numeric:tabular-nums;margin-left:5px}
+.btn.wide{width:100%;text-align:center}
+.btn.primary{background:var(--hl);color:#0A0B0C;border-color:var(--hl);font-weight:800}
+.btn.primary:hover{background:#D8FF62;color:#0A0B0C}
+
+.shophead{display:flex;align-items:baseline;gap:9px;margin-bottom:8px}
+.shophead b{font-size:11.5px;letter-spacing:.22em;font-weight:800}
+.shophead span{font-size:8.5px;color:var(--faint)}
+
+/* 横条卡：左图 + 右信息，横向 5 张 */
+.slots{display:grid;grid-template-columns:repeat(5,1fr);gap:7px;flex:1}
+.slot{display:flex;background:#12141A;border:1px solid var(--line);cursor:pointer;position:relative;overflow:hidden}
+.slot:hover{border-color:var(--hl)}
+.slot .pic{width:46%;background:#0E1014 center/cover no-repeat;border-right:1px solid var(--line)}
+.slot .info{flex:1;padding:7px 8px;display:flex;flex-direction:column;justify-content:flex-start;gap:5px;min-width:0;overflow:hidden}
+.slot .top{display:flex;align-items:center;gap:5px}
+.slot .cost{font-size:10px;font-weight:800;font-variant-numeric:tabular-nums;color:#0A0B0C;
+  background:#B9C2CC;padding:1px 5px}
+.slot .cost.c4{background:#C9A6F0} .slot .cost.c5{background:var(--res)}
+.slot .nm{font-size:11.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.slot .own{font-size:8.5px;line-height:1;color:var(--faint);white-space:nowrap}
+.slot .star{font-size:9px;color:var(--res);letter-spacing:1px}
+/* 已拥有：左下一条荧光短色条 */
+.slot.has::after{content:'';position:absolute;left:0;bottom:0;width:18px;height:2px;background:var(--hl)}
+
+.bench{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;flex:1}
+.bslot{background:#101216;border:1px solid var(--line);position:relative;background-position:center;background-size:cover}
+.bslot.empty{background:#0B0D10}
+.bslot.empty::after{content:'';position:absolute;left:50%;top:50%;width:4px;height:4px;transform:translate(-50%,-50%) rotate(45deg);background:#22262C}
+.bslot .tag{position:absolute;right:0;bottom:0;font-size:8px;color:var(--res);background:#090A0B;padding:1px 3px}
+
+.dockbtns{display:flex;gap:6px;margin-top:8px}
+.dockbtns .btn{flex:1}
+</style>
+</head>
+<body>
+
+<header id="top">
+  <div class="row1">
+    <button class="back"><i></i>返回大厅</button>
+    <div class="brand"><b>失序协议</b><span>DISORDER PROTOCOL</span></div>
+    <div class="spacer"></div>
+    <div class="tabs">
+      <button class="tab on">日志</button>
+      <button class="tab">玩家</button>
+      <button class="tab">藏品</button>
+    </div>
+  </div>
+
+  <div class="row2">
+    <div class="band hl"><em>生命</em><b class="mono">87</b></div>
+    <div class="band res"><em>金币</em><b class="mono">50</b></div>
+    <div class="band"><em>等级</em><b class="mono">06</b></div>
+    <div class="band"><em>人口</em><b class="mono">5/6</b></div>
+    <div class="band"><em>回合</em><b class="mono">08</b></div>
+    <div class="band warn"><em>野怪</em><b class="mono" style="font-size:12px">03</b></div>
+    <div class="tickline"></div>
+    <div class="phase"><span class="dia"></span><em class="lat">PHASE</em><b>布阵</b></div>
+  </div>
+</header>
+
+<div id="main">
+  <aside id="traits">
+    <div class="sec"><b>羁绊</b><span>SYNERGY</span></div>
+
+    <div class="trait on"><i class="mk"></i><div class="body">
+      <div class="t"><b>剑士</b><i>4 / 6</i></div><div class="ln"><i style="width:66%"></i></div></div></div>
+    <div class="trait on"><i class="mk"></i><div class="body">
+      <div class="t"><b>拉特兰</b><i>3 / 4</i></div><div class="ln"><i style="width:75%"></i></div></div></div>
+    <div class="trait on"><i class="mk"></i><div class="body">
+      <div class="t"><b>罗德岛</b><i>5 / 8</i></div><div class="ln"><i style="width:62%"></i></div></div></div>
+    <div class="trait"><i class="mk"></i><div class="body">
+      <div class="t"><b>深海猎人</b><i>2 / 3</i></div><div class="ln"><i style="width:66%"></i></div></div></div>
+    <div class="trait"><i class="mk"></i><div class="body">
+      <div class="t"><b>Mujica Ave</b><i>1 / 3</i></div><div class="ln"><i style="width:33%"></i></div></div></div>
+
+    <div class="hr"></div>
+    <div class="sec"><b>藏品</b><span>RELIC · 4</span></div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:5px;padding:0 14px">
+      <div class="bslot" style="aspect-ratio:1"></div>
+      <div class="bslot" style="aspect-ratio:1"></div>
+      <div class="bslot" style="aspect-ratio:1"></div>
+      <div class="bslot empty" style="aspect-ratio:1"></div>
+    </div>
+  </aside>
+
+  <section id="board">
+    <div class="grid"></div>
+    <div class="ring"><i></i><i></i><i></i><i></i></div>
+    <div class="ch"></div>
+    <div class="vig"></div>
+    <div class="tris"></div>
+
+    <div class="board-tag"><span class="dia"></span><em>DEPLOY AREA</em><b>作战区域 · 第 08 回合</b></div>
+
+    <div class="unit sel" style="left:24%;top:38%">
+      <div class="p" style="background-image:url('../../apps/web/public/assets/units/op48.png')"></div>
+      <div class="cap"><div class="hp"><i style="width:88%"></i></div><div class="mp"><i style="width:64%"></i></div></div>
+      <div class="nm">陈</div>
+    </div>
+    <div class="unit" style="left:38%;top:57%">
+      <div class="p" style="background-image:url('../../apps/web/public/assets/units/op47.png')"></div>
+      <div class="cap"><div class="hp"><i style="width:100%"></i></div><div class="mp"><i style="width:22%"></i></div></div>
+      <div class="nm">玛恩纳</div>
+    </div>
+    <div class="unit" style="left:18%;top:67%">
+      <div class="p" style="background-image:url('../../apps/web/public/assets/units/op37.png')"></div>
+      <div class="cap"><div class="hp"><i style="width:70%"></i></div><div class="mp"><i style="width:91%"></i></div></div>
+      <div class="nm">澄闪</div>
+    </div>
+    <div class="unit foe" style="left:72%;top:42%">
+      <div class="p" style="background-image:url('../../apps/web/public/assets/units/op38.png')"></div>
+      <div class="cap"><div class="hp"><i style="width:52%"></i></div><div class="mp"><i style="width:40%"></i></div></div>
+      <div class="nm">蕾缪安</div>
+    </div>
+  </section>
+
+  <aside id="side">
+    <div class="head"><b>战斗日志</b><span>COMBAT LOG</span></div>
+    <div class="log">
+      <div><u>08·12</u><span><b>陈</b> 施放「赤霄·绝影」</span></div>
+      <div><u>08·13</u><span><b>玛恩纳</b> 命中 3 名敌人 <span class="dmg">−1284</span></span></div>
+      <div><u>08·14</u><span><b>蕾缪安</b> 被击倒</span></div>
+      <div><u>08·15</u><span>剑士羁绊：瞬移后攻击力 <b class="buff">×2</b></span></div>
+    </div>
+
+    <div class="hr" style="margin:11px 14px"></div>
+    <div class="head" style="padding-top:0"><b>玩家</b><span>SQUAD · 6</span></div>
+    <div class="log" style="padding-bottom:12px">
+      <div class="mini me" style="display:flex"><span class="nm"><i class="sw"></i>博士</span><span class="v mono">87</span></div>
+      <div class="mini" style="display:flex"><span class="nm"><i class="sw"></i>阿米娅</span><span class="v mono">74</span></div>
+      <div class="mini" style="display:flex"><span class="nm"><i class="sw"></i>凯尔希</span><span class="v mono">61</span></div>
+    </div>
+  </aside>
+</div>
+
+<footer id="dock">
+  <div class="col l">
+    <div class="goldrow"><em>金币</em><b>50</b><i>连胜 +2</i></div>
+    <div class="lvrow"><span class="lv">LV 06</span><span class="exp"><i></i></span><span class="txt mono">14/24</span></div>
+    <div style="flex:1"></div>
+    <button class="btn wide">买经验<span class="c">4</span></button>
+    <div style="font-size:8.5px;color:var(--faint);letter-spacing:.12em;margin-top:7px">人口上限 = 等级</div>
+  </div>
+
+  <div class="col">
+    <div class="shophead"><b>商店</b><span>SHOP · 1费 45% / 2费 30%</span></div>
+    <div class="slots">
+      <div class="slot has"><div class="pic" style="background-image:url('../../apps/web/public/assets/units/op48.png')"></div>
+        <div class="info"><div class="top"><span class="cost">3</span><span class="star">★★</span></div><div class="nm">陈</div><div class="own">已拥有 3</div></div></div>
+      <div class="slot has"><div class="pic" style="background-image:url('../../apps/web/public/assets/units/op47.png')"></div>
+        <div class="info"><div class="top"><span class="cost c4">4</span></div><div class="nm">玛恩纳</div><div class="own">已拥有 2</div></div></div>
+      <div class="slot has"><div class="pic" style="background-image:url('../../apps/web/public/assets/units/op37.png')"></div>
+        <div class="info"><div class="top"><span class="cost">2</span></div><div class="nm">澄闪</div><div class="own">已拥有 1</div></div></div>
+      <div class="slot"><div class="pic" style="background-image:url('../../apps/web/public/assets/units/op38.png')"></div>
+        <div class="info"><div class="top"><span class="cost c5">5</span></div><div class="nm">蕾缪安</div><div class="own">—</div></div></div>
+      <div class="slot has"><div class="pic" style="background-image:url('../../apps/web/public/assets/units/op10.png')"></div>
+        <div class="info"><div class="top"><span class="cost">1</span></div><div class="nm">空弦</div><div class="own">已拥有 6</div></div></div>
+    </div>
+    <div class="dockbtns">
+      <button class="btn">刷新<span class="c">2</span></button>
+      <button class="btn">未锁定</button>
+      <button class="btn primary" style="flex:1.5">开始战斗</button>
+    </div>
+  </div>
+
+  <div class="col r">
+    <div class="shophead"><b>备战席</b><span>BENCH · 4/9</span></div>
+    <div class="bench">
+      <div class="bslot" style="background-image:url('../../apps/web/public/assets/units/op10.png')"><span class="tag">★</span></div>
+      <div class="bslot" style="background-image:url('../../apps/web/public/assets/units/op48.png')"><span class="tag">★★</span></div>
+      <div class="bslot" style="background-image:url('../../apps/web/public/assets/units/op37.png')"><span class="tag">★</span></div>
+      <div class="bslot" style="background-image:url('../../apps/web/public/assets/units/op47.png')"><span class="tag">★</span></div>
+      <div class="bslot empty"></div><div class="bslot empty"></div><div class="bslot empty"></div>
+      <div class="bslot empty"></div><div class="bslot empty"></div>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

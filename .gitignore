@@ -1,0 +1,60 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+.vite/
+
+# 本机对局会话（断线重连用）—— 运行期文件，见 scripts/serve-static.mjs
+.airnight-session.json
+
+# 构建期的小人素材缓存：官方 Spine 三件套（.skel/.atlas/.png）+ 前端运行库。
+# 只在本机存在，不提交。见 scripts/fetch-chibi.ts。
+.chibi-cache/
+
+# 启动器的运行期文件（都是本机才有的，别提交）
+# · .airnight-run.json  —— "这一份在跑"的标记（单实例判定）
+# · .window-profile/    —— ★ 0.3.3 应用窗口的专属浏览器档案（Edge/Chrome --app）
+#   里面是 Chromium 的缓存和窗口位置，几十 MB，换台机器就该重建
+.airnight-run.json
+.window-profile/
+
+# ============================================================
+#  官方素材：版权归鹰角网络 / 悠星所有，一律不入库
+#  任何人 clone 之后跑一遍 scripts/fetch-*.ts 才能在本机得到素材
+#  详见 NOTICE.md 与 docs/同人使用与版权说明.md
+# ============================================================
+
+# 干员小人序列帧 / 半身像 / 头像 / 藏品图标 / 地图背景
+# 产出脚本：scripts/fetch-chibi.ts、fetch-portraits.ts、fetch-token-art.ts、
+#           fetch-map-assets.ts、fetch-item-icons.ts、fetch-player-avatars.mjs
+apps/web/public/assets/**
+# 但保留这两份说明，它们解释素材是怎么来的
+!apps/web/public/assets/README.md
+!apps/web/public/assets/chibi/README.md
+
+# 官方 OST 63 首（约 284 MB），产出脚本：scripts/import-music.mjs
+apps/web/public/music/
+
+# 兜底：如果哪天用 mklink 把素材目录链接到别的版本目录，
+# git 看到的是「文件」而不是目录，上面带 /** 的规则（只匹配目录内容）拦不住
+/apps/web/public/assets
+/apps/web/public/music
+
+# ============================================================
+#  本机测试与构建残留（体积大、无版本价值）
+# ============================================================
+
+# 自动化截图（03x-*.png 等，约 760 MB）
+.ui-e2e/
+.chibi-e2e/
+# 特效方案草稿
+.fx-proposal/
+特效图/
+# pnpm 的包存储
+.pnpm/
+tmp-assets/
+# 开发期临时产物（截图裁剪、调试脚本）
+.workbuddy-tmp-*
+# 内部开发记录（会话记忆、决策日志），不入公开仓库
+.workbuddy/
+

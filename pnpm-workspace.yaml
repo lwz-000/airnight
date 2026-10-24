@@ -1,0 +1,21 @@
+packages:
+  - 'packages/*'
+  - 'apps/*'
+
+# esbuild 的 postinstall 需要「用管道捕获子进程输出」，本机沙箱禁止这一点。
+# 好消息：esbuild 真正的二进制来自平台可选依赖 @esbuild/win32-x64，postinstall 只做拷贝校验。
+# 所以这里禁掉构建脚本，Vitest / Vite 依然能正常运行（下面的测试会验证）。
+allowBuilds:
+  esbuild: false
+
+# ★ 用「扁平」布局（hoisted）而不是默认的隔离布局（isolated）。
+#
+# 【为什么？】默认的 isolated 布局要给每个包在 .pnpm 里创建一批软链接
+# （.pnpm/<包>/node_modules/<依赖>）。本机上这一步会**静默失败**：
+# 包目录建出来了、里面的链接却没建，而 pnpm 认为"已经装好了"不再重试，
+# 结果 tsx / vite / vitest 全部报 MODULE_NOT_FOUND（启动游戏.cmd 也会挂）。
+# 换 hoisted 后依赖直接铺在 node_modules 下，不依赖那些软链接，一切正常。
+#
+# 这是 pnpm 12 在本机的环境问题，与项目代码无关。
+# 注意：pnpm 10+ 的这类设置在 pnpm-workspace.yaml 里，写在 .npmrc 里不生效。
+nodeLinker: hoisted

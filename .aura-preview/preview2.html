@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><title>金色光华预览</title>
+<style>
+  /* 一格 = 96px（世界 1.0 单位）；卡片 = 0.72 × 0.96 格；光效 = 0.84 × 1.05 格 */
+  :root { --cell: 96px; --card-w: 69px; --card-h: 92px; --chibi-h: 86px; --aura-w: 81px; --aura-h: 101px; }
+  html, body { margin: 0; padding: 0; background: #1b2030; }
+  .row { display: flex; gap: 10px; padding: 8px 12px; }
+  .wrap { position: relative; width: var(--cell); height: var(--cell); }
+  /* 一格：棋盘格子的边界（虚线只作参考，游戏里没有这条线） */
+  .cellbox { position: absolute; inset: 0; border: 1px dashed rgba(120, 140, 180, 0.55); border-radius: 3px; }
+  /* 卡片（棋子底座） */
+  .card {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    width: var(--card-w); height: var(--card-h);
+    border-radius: 6px; background: rgba(70, 88, 120, 0.55);
+    border: 1px solid rgba(140, 170, 210, 0.45);
+  }
+  /* 小人剪影 */
+  .unit {
+    position: absolute; left: 50%; top: 52%; transform: translate(-50%, -50%);
+    width: 38px; height: var(--chibi-h);
+    border-radius: 19px 19px 12px 12px;
+    background: linear-gradient(180deg, #cfd6e4, #7f8899);
+    box-shadow: 0 5px 14px rgba(0, 0, 0, 0.5);
+  }
+  /* 光效层：加色混合，等价于 three 里的 AdditiveBlending */
+  .aura { position: absolute; left: 50%; top: 52%; transform: translate(-50%, -50%);
+          width: var(--aura-w); height: var(--aura-h); mix-blend-mode: screen; }
+  .aura canvas { width: 100%; height: 100%; display: block; }
+  .label { color: #8f9bb3; font: 12px/1.5 "Microsoft YaHei", sans-serif; padding: 2px 12px 0; }
+  .demo { display: flex; align-items: center; gap: 16px; padding: 4px 12px 10px; }
+  .demo .wrap { flex: 0 0 auto; }
+</style></head>
+<body>
+<div class="label">比例参考：虚线 = 一个格子 · 灰框 = 卡片 · 灰色人形 = 小人 · 金色 = 光效（比一格大一点点）</div>
+<div class="demo" id="sketch"></div>
+
+<div class="label">无敌 · 4 帧（0.8 秒转一圈，常亮循环）</div>
+<div class="row" id="row-inv"></div>
+
+<div class="label">重生过渡 · 4 帧（同一条流光，整体由暗到亮 0.3 → 1.0）</div>
+<div class="row" id="row-reb"></div>
+
+<script>
+/* ============================================================
+   绘制逻辑是 `apps/web/src/three/unit-aura.ts` 里 drawAuraFrame 的**副本**，
+   只为在这张预览图上把效果画出来（正式实现以那个文件为准）。
+   ============================================================ */
+const AURA_W = 128, AURA_H = 160, FRAMES = 16;
+
+function drawAuraFrame(kind, frame) {
+  const canvas = document.createElement('canvas');
+  canvas.width = AURA_W; canvas.height = AURA_H;
+  const ctx = canvas.getContext('2d');
+  const cx = AURA_W / 2, cy = AURA_H * 0.52, rx = AURA_W * 0.47, ry = AURA_H * 0.47;
+
+  const warm = kind === 'rebirth';
+  const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(rx, ry));
+  glow.addColorStop(0, warm ? 'rgba(255,200,70,0.62)' : 'rgba(255,208,88,0.46)');
+  glow.addColorStop(0.55, 'rgba(255,170,36,0.30)');
+  glow.addColorStop(1, 'rgba(255,150,20,0)');
+  ctx.fillStyle = glow; ctx.fillRect(0, 0, AURA_W, AURA_H);
+
+  const baseAngle = (frame / FRAMES) * Math.PI * 2;
+  ctx.save(); ctx.translate(cx, cy);
+  for (let i = 0; i < 3; i++) {
+    ctx.save(); ctx.rotate(baseAngle + (i * Math.PI * 2) / 3);
+    const band = ctx.createLinearGradient(0, -ry * 0.95, 0, ry * 0.95);
+    band.addColorStop(0, 'rgba(255,214,96,0)');
+    band.addColorStop(0.5, 'rgba(255,236,150,0.66)');
+    band.addColorStop(1, 'rgba(255,214,96,0)');
+    ctx.fillStyle = band;
+    const bw = AURA_W * 0.09;
+    ctx.fillRect(-bw / 2, -ry * 0.95, bw, ry * 1.9);
+    ctx.restore();
+  }
+  ctx.restore();
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'destination-in';
+  ctx.translate(cx, cy); ctx.scale(rx, ry);
+  const mask = ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
+  mask.addColorStop(0, 'rgba(0,0,0,1)');
+  mask.addColorStop(0.78, 'rgba(0,0,0,0.92)');
+  mask.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = mask; ctx.fillRect(-1, -1, 2, 2);
+  ctx.restore();
+  return canvas;
+}
+
+/** 一格：格子框 + 卡片 + 小人 + 光效（intensity 模拟 material.opacity） */
+function cell(kind, frame, intensity) {
+  const wrap = document.createElement('div');
+  wrap.className = 'wrap';
+  wrap.insertAdjacentHTML('beforeend', '<div class="cellbox"></div><div class="card"></div><div class="unit"></div>');
+  const aura = document.createElement('div');
+  aura.className = 'aura';
+  if (intensity === 0) aura.style.display = 'none';
+  else aura.style.opacity = String(intensity);
+  aura.appendChild(drawAuraFrame(kind, frame));
+  wrap.appendChild(aura);
+  return wrap;
+}
+
+document.getElementById('sketch').appendChild(cell('invincible', 8, 0));
+
+const inv = document.getElementById('row-inv');
+for (const f of [0, 4, 8, 12]) inv.appendChild(cell('invincible', f, 0.62));
+
+const reb = document.getElementById('row-reb');
+[0, 4, 8, 12].forEach((f, i) => {
+  const t = i / 3;
+  reb.appendChild(cell('rebirth', f, 0.3 + 0.65 * t));
+});
+document.title = 'ready';
+</script>
+</body></html>

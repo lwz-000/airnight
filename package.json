@@ -1,0 +1,48 @@
+{
+  "name": "airnight",
+  "private": true,
+  "version": "0.0.2",
+  "description": "AIRNIGHT - 自走棋（3D 场景 + 2D 角色与 UI，支持好友联机）",
+  "type": "module",
+  "packageManager": "pnpm@12.3.4",
+  "scripts": {
+    "verify": "node scripts/verify.mjs",
+    "launch": "node node_modules/tsx/dist/cli.mjs scripts/launch.ts",
+    "test": "node node_modules/vitest/vitest.mjs run --config config/vitest.config.ts",
+    "sim": "node node_modules/tsx/dist/cli.mjs packages/sim-cli/src/main.ts",
+    "server": "node node_modules/tsx/dist/cli.mjs packages/server/src/main.ts",
+    "web": "node node_modules/vite/bin/vite.js --config apps/web/vite.config.ts",
+    "build": "node node_modules/vite/bin/vite.js build --config apps/web/vite.config.ts",
+    "static": "node scripts/serve-static.mjs",
+    "share": "node scripts/share.mjs",
+    "tunnel": "node scripts/check-tunnel.mjs",
+    "balance": "node node_modules/tsx/dist/cli.mjs scripts/balance-probe.ts",
+    "check": "node node_modules/tsx/dist/cli.mjs scripts/check-data.ts",
+    "values:export": "node node_modules/tsx/dist/cli.mjs scripts/export-value-sheet.ts",
+    "stats:export": "node node_modules/tsx/dist/cli.mjs scripts/export-stat-sheet.ts",
+    "stats:import": "node node_modules/tsx/dist/cli.mjs scripts/import-stat-sheet.ts",
+    "smoke": "node node_modules/tsx/dist/cli.mjs scripts/netplay-smoke.ts",
+    "playtest": "node node_modules/tsx/dist/cli.mjs scripts/netplay-playtest.ts",
+    "pnpm": "node scripts/pnpm.mjs",
+    "chibi:fetch": "node node_modules/tsx/dist/cli.mjs scripts/fetch-chibi.ts",
+    "chibi:render": "node scripts/render-chibi.mjs",
+    "music:import": "node scripts/import-music.mjs",
+    "portraits:fetch": "node node_modules/tsx/dist/cli.mjs scripts/fetch-portraits.ts",
+    "token:art": "node node_modules/tsx/dist/cli.mjs scripts/fetch-token-art.ts"
+  },
+  "devDependencies": {
+    "@types/jsdom": "^30.0.0",
+    "@types/node": "^22.10.0",
+    "@types/three": "^0.185.4",
+    "@types/ws": "^8.5.13",
+    "jsdom": "^30.0.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5",
+    "vitest": "^2.1.8"
+  },
+  "dependencies": {
+    "three": "^0.171.0",
+    "ws": "^8.18.0"
+  }
+}
