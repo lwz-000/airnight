@@ -35,9 +35,12 @@
  *   游戏图标.ico       ← 启动游戏.lnk 的图标（首次运行由 启动游戏.vbs 自动创建）
  *   更新日志.txt       ← docs/更新日志.txt
  *   玩法说明.txt       ← 从上一个正式包沿用（它是"怎么玩"的长期文案，不随版本变）
+ *   版权说明.txt       ← NOTICE.md（非商业条款 + 权利人下架承诺 + 素材降级链）
+ *   第三方组件声明.txt ← THIRD-PARTY-NOTICES.md（three / ws / Node / 字体 的许可证全文）
  *   app\launch.mjs     ← 启动器（build-portable-launch.mjs 生成，**不是** scripts/launch.ts）
  *   app\airnight-server.mjs ← 服务端 bundle（ws 打进去，runtime 里没有 node_modules）
- *   runtime\node.exe   ← 当前这一版 Node（+ 许可证）
+ *   runtime\node.exe   ← 当前这一版 Node
+ *   runtime\LICENSE-Node.js.txt ← 整份复制（含 OpenSSL/V8/libuv 的许可，约 148 KB）
  *   web\               ← 前端产物（dist，整份复制）
  */
 
@@ -53,7 +56,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -234,12 +237,31 @@ step('放 runtime/node.exe');
 */
 cpSync(process.execPath, join(OUT, 'runtime', 'node.exe'));
 log(`ok -> runtime/node.exe（${process.version}）`);
-writeFileSync(
-  join(OUT, 'runtime', 'LICENSE-Node.js.txt'),
-  `本目录里的 node.exe 是 Node.js 运行时（${process.version}）。\n` +
-    'Node.js 以 MIT 许可证发布，完整许可证见 https://nodejs.org/en/about/license\n',
-  'utf8',
-);
+
+/*
+  ★ Node 的许可证必须**原样整份复制**，不能只写一句"见官网"。
+    MIT 要求「版权声明与许可声明必须包含在软件的所有副本中」——
+    node.exe 是随包分发的一份副本，旁边就得有那份 MIT 文本。
+    而且 node.exe 还链接了 OpenSSL / V8 / zlib / libuv 等组件，各自的许可证都在
+    这份 LICENSE 里（约 148 KB），省略它就等于连带漏掉这些声明。
+    官方 Windows 包里 node.exe 的同目录就放着这份 LICENSE，直接从那里取。
+*/
+const nodeLicense = join(dirname(process.execPath), 'LICENSE');
+if (existsSync(nodeLicense)) {
+  cpSync(nodeLicense, join(OUT, 'runtime', 'LICENSE-Node.js.txt'));
+  log(`ok -> runtime/LICENSE-Node.js.txt（${statSync(nodeLicense).size} 字节，来自 ${nodeLicense}）`);
+} else {
+  // 兜底：某些发行版（如部分 Linux 包管理器）把 LICENSE 放在别处或没放。
+  writeFileSync(
+    join(OUT, 'runtime', 'LICENSE-Node.js.txt'),
+    `本目录里的 node.exe 是 Node.js 运行时（${process.version}）。\n\n` +
+      'Node.js 以 MIT 许可证发布：Copyright Node.js contributors. All rights reserved.\n' +
+      '完整许可证（含 OpenSSL / V8 / zlib / libuv 等内置组件）见：\n' +
+      '  https://nodejs.org/en/about/license\n',
+    'utf8',
+  );
+  log(`⚠ 没在 ${nodeLicense} 找到 Node 的 LICENSE，已写一份指向官网的说明（不完整）`);
+}
 
 // ============================================================
 //  5. 图标 + 文档 + 启动文件
@@ -251,6 +273,18 @@ log('ok -> 游戏图标.ico');
 
 cpSync(join(ROOT, 'docs', '更新日志.txt'), join(OUT, '更新日志.txt'));
 log('ok -> 更新日志.txt');
+
+/*
+  ★ 两份版权文件必须随包，这是硬要求不是客套：
+    · `three` 和 `ws` 是**打进 bundle** 的，Vite / esbuild 会把源码里的许可证注释剥掉，
+      产物里一个 MIT 字都不剩 —— 只有 `第三方组件声明.txt` 能补上那个随副本分发的义务。
+    · 完整包里有官方素材，`版权说明.txt` 是非商业与下架条款的载体。
+  用 .txt 而不是 .md：包里的其他文档都是 .txt，玩家双击就能用记事本打开。
+*/
+cpSync(join(ROOT, 'THIRD-PARTY-NOTICES.md'), join(OUT, '第三方组件声明.txt'));
+log('ok -> 第三方组件声明.txt');
+cpSync(join(ROOT, 'NOTICE.md'), join(OUT, '版权说明.txt'));
+log('ok -> 版权说明.txt');
 
 /*
   玩法说明.txt 是"怎么玩"的长期文案，不随版本变 —— 从上一个正式包沿用。
@@ -285,6 +319,37 @@ for (const junk of ['.airnight-run.json', '.airnight-session.json', '游戏日�
     log(`删掉 ${junk}`);
   }
 }
+
+// ============================================================
+//  6.5 版权文件自检（缺一份就不许发包）
+// ============================================================
+step('版权文件自检');
+/*
+  ★ 这不是"顺手检查一下"，是把 MIT 的义务做成断言。
+    `three` 和 `ws` 是打进 bundle 的，Vite / esbuild 会把许可证注释剥掉
+    （实测：`dist/assets/index-*.js` 里搜 "three.js authors" 与
+    "Permission is hereby granted" 都是 0 命中），所以产物自身**不含任何 MIT 文本**。
+    补上这个义务的唯一载体就是随包的那份声明文件 —— 它一旦漏掉，包就不合规了。
+
+  ★ 用 throw 而不是 log 警告：发包后才发现比打不出包严重得多。
+*/
+const MUST_HAVE = [
+  ['第三方组件声明.txt', 5000], // THIRD-PARTY-NOTICES.md，含 three/ws/Node 的 MIT 全文
+  ['版权说明.txt', 2000], // NOTICE.md，非商业条款与下架承诺
+  ['runtime/LICENSE-Node.js.txt', 10000], // Node 及其内置组件，约 148 KB；小于这个数说明退化成了占位说明
+  ['web/fonts/OFL.txt', 3000], // SIL OFL 1.1 全文，OFL 要求随字体分发
+  ['web/fonts/FONT-LICENSE.txt', 500], // 思源黑体的版权声明
+];
+const missing = [];
+for (const [rel, minBytes] of MUST_HAVE) {
+  const path = join(OUT, ...rel.split('/'));
+  if (!existsSync(path)) missing.push(`${rel}（不存在）`);
+  else if (statSync(path).size < minBytes) missing.push(`${rel}（只有 ${statSync(path).size} 字节，疑似被占位文本替换）`);
+}
+if (missing.length > 0) {
+  throw new Error(`版权文件不完整，拒绝发包：\n  - ${missing.join('\n  - ')}`);
+}
+log(`✓ ${MUST_HAVE.length} 份版权文件齐全`);
 
 // ============================================================
 //  7. 冒烟（用包里的 node + 包里的启动器真起一次）

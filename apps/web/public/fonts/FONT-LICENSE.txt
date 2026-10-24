@@ -20,12 +20,17 @@ use of this Font Software.
 OFL 1.1 全文：https://scripts.sil.org/OFL
 （字体自带的 name 表 nameID 13 / 14 就是上面这段声明和这个地址，未改动。）
 
-★ 分发前必做
+许可全文
 ----------------------------------------------------------------
-OFL 要求「随字体一起分发许可全文」。本文件目前只写了声明和官方地址，
-**正式对外发布前请把官方 OFL.txt 原文放进本目录**（从
-https://scripts.sil.org/OFL 或 Noto 的 GitHub 仓库 LICENSE 文件取），
-文件名保持 `OFL.txt`。
+OFL 要求「随字体一起分发许可全文」。本目录的 `OFL.txt` 就是 SIL OFL 1.1 全文
+（取自 https://openfontlicense.org/documents/OFL.txt），开头的版权占位符已填成
+Adobe 的实际声明。
+
+发布时**必须**把它和字体一起分发、不要删。`apps/web/public/fonts/` 会被 Vite
+整目录复制进 `web/fonts/`，所以两份文件都会出现在发行包里；打包时也会被
+`scripts/pack-portable.mjs` 的完整性检查覆盖到。
+
+第三方组件的完整清单（含本字体的条目）见仓库根 `THIRD-PARTY-NOTICES.md`。
 
 重新生成
 ----------------------------------------------------------------
